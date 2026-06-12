@@ -151,51 +151,22 @@ mkdir -p "$SNAPSHOT_DIR"
 
 REDACTION_VERSION="v2"
 
-# Построчная маскировка (fallback и для не-JSON секций). Stdin -> stdout.
-redact_stream() {
-    # 1. KEY=value, где секрет-слово (TOKEN/KEY/SECRET/PASSWORD/PASS/API/CREDENTIAL)
-    #    стоит ГДЕ УГОДНО в имени переменной (не только в конце). Так ловятся и
-    #    AWS_ACCESS_KEY_ID=, и API_TOKEN_PROD=, а не только *_KEY=/*_TOKEN=.
-    #    (выровнено с логикой jq-пути redact_json_with_jq, где секрет-слово тоже
-    #    матчится в любом месте имени до '=').
-    # 2. credentials в URL: scheme://user:pass@host -> scheme://user:<REDACTED>@host
-    # 3. секрет в query-string URL: ?secret=...&token=... -> ?secret=<REDACTED>
-    #    (граблекейс selectel: cron-задача с curl "...?secret=B+SLNc55..." утекала
-    #    открытым текстом в crontab.txt — KEY=value и url:pass@ её не ловили).
-    # 4. AWS access key ID по ЗНАЧЕНИЮ: AKIA/ASIA + 16 символов [A-Z0-9]. Имя
-    #    переменной AWS_ACCESS_KEY_ID ловится правилом 1, но голый AKIA... в логе
-    #    или нестандартной обёртке — нет; правило 4 ловит сам идентификатор.
-    sed -E \
-        -e 's/("?[A-Za-z0-9_]*(TOKEN|KEY|SECRET|PASSWORD|PASS|API|CREDENTIAL)[A-Za-z0-9_]*"?[[:space:]]*[=:][[:space:]]*"?)[^"[:space:],}]+/\1<REDACTED>/Ig' \
-        -e 's#(([A-Za-z][A-Za-z0-9+.-]*)://[^:@/[:space:]]+:)[^@/[:space:]]+@#\1<REDACTED>@#g' \
-        -e 's/([?&](secret|token|key|password|passwd|access_token|api_key|apikey|sig|signature)=)[^&"'"'"'[:space:]]+/\1<REDACTED>/Ig' \
-        -e 's/(AKIA|ASIA)[A-Z0-9]{16}/<REDACTED>/g'
-}
-
-# Маскировка JSON через jq, если он доступен: значения .Config.Env и .Env,
-# чей ключ матчит секрет-паттерн, заменяются на KEY=<REDACTED> (имя ключа
-# сохраняется для аудита). Возвращает ненулевой код, если jq не справился —
-# тогда вызывающий код падает в построчный fallback.
-#
-# ВАЖНО: один лишь jq НЕ ловит пароль внутри URL (DATABASE_URL=postgres://u:pass@host)
-# — имя переменной не матчит секрет-паттерн, и строка остаётся нетронутой
-# (проверено тестом: пароль утекал). Поэтому ПОСЛЕ структурной маскировки
-# прогоняем вывод jq через тот же URL-паттерн, что и построчный fallback.
-redact_json_with_jq() {
-    jq '
-      def redact_env:
-        if . == null then .
-        else map(
-          if test("^[^=]*(TOKEN|KEY|SECRET|PASSWORD|PASS|API)[^=]*=" ; "i")
-          then sub("=.*"; "=<REDACTED>")
-          else .
-          end
-        )
-        end;
-      (.. | objects | select(has("Env")) | .Env) |= redact_env
-    ' 2>/dev/null \
-    | sed -E "s#(([A-Za-z][A-Za-z0-9+.-]*)://[^:@/[:space:]]+:)[^@/[:space:]\"]+@#\1<REDACTED>@#g"
-}
+# Функции маскировки redact_stream / redact_json_with_jq живут в единой
+# библиотеке _lib/redact.sh (канон redaction v2) — её же используют
+# rotate-secrets и другие скиллы. Не дублируем код: при изменении паттернов
+# правится ОДНО место. Если библиотека не найдена — fail-fast: молча писать
+# снимок без маскировки нельзя (приоритет №1 — секреты не утекают).
+DUMP_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REDACT_LIB="$DUMP_SCRIPT_DIR/../../_lib/redact.sh"
+if [ -f "$REDACT_LIB" ]; then
+    # shellcheck source=/dev/null
+    source "$REDACT_LIB"
+else
+    echo "ERROR: библиотека маскировки не найдена: $REDACT_LIB" >&2
+    echo "Снимок БЕЗ redaction создавать запрещено. Запускай скрипт из репо sysadmin/" >&2
+    echo "(bash .claude/skills/inventory-scan/scripts/dump-snapshot.sh ...)." >&2
+    exit 2
+fi
 
 if command -v jq &>/dev/null; then
     REDACTION_TOOL="jq"

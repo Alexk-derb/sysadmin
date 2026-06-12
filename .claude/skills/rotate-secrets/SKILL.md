@@ -44,6 +44,24 @@ allowed-tools: Bash, Read, Edit, Write
 
 # Инструкции
 
+## 🔒 Железное правило обращения с секретами в этом скилле
+
+Скилл, чья цель — закрыть утечку, не имеет права сам её создавать. Поэтому:
+
+1. **Секрет никогда не печатается** — ни в stdout, ни в отчёт оператору, ни в
+   incident-запись. Передача оператору — только через файл 0600 или менеджер паролей.
+2. **Секрет никогда не попадает в argv команд** (ни локально, ни на сервере) —
+   командные строки видны в `ps`, истории шелла и логах. Передача — через stdin
+   (SQL-текст в `psql`/`mysql` через `docker exec -i`; `IFS= read -r` в удалённом
+   шелле → env-переменная) или через env-переменную, заданную БЕЗ интерполяции
+   значения в текст команды.
+3. **Вывод всех серверных команд проходит маскировку** `redact_stream` из единой
+   библиотеки `.claude/skills/_lib/redact.sh` (та же, что в inventory-scan) —
+   страховка от эха секрета в сообщениях об ошибках БД.
+
+Скрипты `scripts/rotate-db-password.sh` и `scripts/rotate-api-token.sh` реализуют
+все три пункта — используй их, а не ручные команды из памяти.
+
 ## Шаг 1. Pre-check (Green Zone)
 
 - [ ] Секрет существует в `inventory/access.md` — найти строку с этим `SECRET_NAME`.
@@ -77,37 +95,47 @@ allowed-tools: Bash, Read, Edit, Write
 
 ### 3.1 db-password
 
+Основной путь — готовый скрипт (в нём весь паттерн безопасной передачи уже реализован):
+
 ```bash
-# 1. Сгенерировать новый
+bash scripts/rotate-db-password.sh \
+    --type postgres --server "$SERVER" --container postgres \
+    --role <role> --env-files /opt/<svc>/.env --consumer-dirs /opt/<svc> \
+    --var-name POSTGRES_PASSWORD --secret-name <NAME>
+```
+
+Что он делает (и как это повторить вручную, НЕ нарушая железное правило):
+
+```bash
+# 1. Сгенерировать новый (живёт только в переменной локального шелла)
 NEW=$(openssl rand -base64 32 | tr -d '+/=' | head -c 32)
 
 # 2. Сохранить в менеджере паролей под ключом <SECRET_NAME>-new
 #    (не перезаписывая старый — он понадобится для отката)
 #    Keychain: security add-generic-password -a infra -s <NAME>-new -w "$NEW"
 #    pass:     pass insert -e infra/db/<NAME>-new <<< "$NEW"
+#    (значение уходит из переменной, на экране не появляется)
 
-# 3. ALTER USER в БД
-ssh "$SERVER" "docker exec postgres psql -U postgres \
-    -c \"ALTER USER <role> WITH PASSWORD '$NEW'\""
+# 3. ALTER USER в БД — SQL через stdin (docker exec -i), НЕ через -c "...$NEW...":
+printf "ALTER USER <role> WITH PASSWORD '%s';\n" "$NEW" | \
+    ssh "$SERVER" "docker exec -i postgres psql -U postgres"
 
-# 4. Атомарно подменить во всех .env (НЕ редактировать вручную — sed)
-for env_file in $ENV_FILES; do
-    ssh "$SERVER" "sed -i.bak 's|^<VAR>=.*|<VAR>=$NEW|' '$env_file'"
-done
+# 4. Подменить во всех .env — пароль через stdin удалённого шелла, не в argv sed:
+#    (полный паттерн с awk/ENVIRON — в scripts/rotate-db-password.sh, шаг 3)
 
 # 5. Restart всех потребителей (минимальный downtime)
 for compose_dir in $CONSUMER_DIRS; do
     ssh "$SERVER" "cd $compose_dir && docker compose restart"
 done
 
-# 6. Verify: connection works
-ssh "$SERVER" "PGPASSWORD='$NEW' psql -h 127.0.0.1 -U <role> <db> -c 'SELECT 1'"
+# 6. Verify: connection works — пароль в env удалённого шелла через stdin:
+printf '%s\n' "$NEW" | ssh "$SERVER" \
+    'IFS= read -r PGPASSWORD; export PGPASSWORD; psql -h 127.0.0.1 -U <role> <db> -c "SELECT 1"'
 # Ожидаем: 1
 
-# 7. Verify: старый пароль НЕ работает
-ssh "$SERVER" "PGPASSWORD='<OLD>' psql -h 127.0.0.1 -U <role> <db> -c 'SELECT 1'" \
-    && echo "FAIL: старый пароль ещё работает!" \
-    || echo "OK: старый пароль не работает"
+# 7. Verify: старый пароль НЕ работает — тем же stdin-паттерном, что в п.6,
+#    подставив старый пароль из менеджера (НЕ из истории, НЕ интерполяцией).
+# Ожидаем: ошибка аутентификации.
 
 # 8. Удалить старый из менеджера паролей (только после verify)
 #    Keychain: security delete-generic-password -a infra -s <NAME>-old
@@ -115,23 +143,22 @@ ssh "$SERVER" "PGPASSWORD='<OLD>' psql -h 127.0.0.1 -U <role> <db> -c 'SELECT 1'
 # Переименовать <NAME>-new → <NAME>
 ```
 
-См. `scripts/rotate-db-password.sh` — параметризованная версия для PG/MySQL/Redis.
-
 ### 3.2 api-token
 
 ```bash
 # 1. Создать новый в провайдерской панели (Telegram BotFather, GitHub Settings,
 #    Cloudflare API tokens, Yandex.Disk OAuth)
 # 2. Сохранить в менеджере паролей как <NAME>-new
-# 3. Подменить в .env (как db-password)
-# 4. Restart соответствующего сервиса
-# 5. Verify через test API call:
-curl -sS "https://api.telegram.org/bot$NEW/getMe" | jq .ok
-# Ожидаем: true
+# 3-5. Подмена в .env + restart + verify — через скрипт (токен вводится скрыто,
+#      в argv и историю не попадает):
+bash scripts/rotate-api-token.sh \
+    --server "$SERVER" --env-file /opt/<svc>/.env --var-name <VAR> \
+    --consumer-dir /opt/<svc> \
+    --verify-cmd 'printf "url = \"https://api.telegram.org/bot%s/getMe\"\n" "$TOKEN" | curl -sS --config - | jq -e .ok'
+# verify-cmd получает токен в env-переменной TOKEN; URL уходит в curl через
+# --config - (stdin), чтобы токен не светился в argv curl (виден в ps).
 # 6. Revoke старого в провайдерской панели (только после verify)
 ```
-
-См. `scripts/rotate-api-token.sh`.
 
 ### 3.3 ssh-key
 
