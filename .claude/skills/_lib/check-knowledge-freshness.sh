@@ -146,7 +146,8 @@ while IFS= read -r -d '' file; do
             RESULTS_HUMAN+="✅ $rel_path — last_researched: $last_researched (возраст $age_days дней, TTL $ttl_days)"$'\n'
         fi
     fi
-done < <(find "$KNOWLEDGE_ROOT" -name "*.md" -type f -print0)
+done < <(find "$KNOWLEDGE_ROOT" -name "*.md" -type f ! -name "*.example.md" -print0)
+# *.example.md — шаблоны структуры (плейсхолдер-даты), не живое знание: их свежесть не проверяем.
 
 RESULTS_JSON+="]"
 
