@@ -15,6 +15,16 @@ sysadmin-config.json
 !sysadmin-config.example.json
 !sysadmin-config.schema.json
 
+# Бэкап-копии конфигов и любых файлов (создаются /sysadmin-init при миграции,
+# sed -i.bak и т.п.) — личные данные не должны уехать в коммит (P17).
+*.bak
+*.bak.*
+
+# «Конфликтные копии» облачных синхронизаторов (Яндекс.Диск, Dropbox и т.п.) —
+# появляются при работе с двух машин, в репо им не место (P20).
+*конфликтная копия*
+*conflicted copy*
+
 # Мусор macOS
 .DS_Store
 ._*
