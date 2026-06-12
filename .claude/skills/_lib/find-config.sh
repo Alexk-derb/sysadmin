@@ -103,6 +103,17 @@ resolve_infra_path() {
 # Алгоритм: bridge-файл ~/.claude/agents/sysadmin.md содержит абсолютный путь
 # к актуальному sysadmin/ в строке формата "**`/path/to/sysadmin/`**".
 # Если bridge нет — пробуем типичные локации и cwd-эвристики.
+#
+# Маркер корня (задача 0.5 рефакторинга, мина P12): версионируемый файл
+# `.sysadmin-root` — устойчивый признак, НЕ зависящий от файла персоны
+# (.claude/agents/sysadmin.md в 2.0 переедет в CLAUDE.md). Старый признак
+# оставлен запасным для установок, где обновили только часть файлов.
+_is_sysadmin_root() {
+    [ -f "$1/.sysadmin-root" ] && return 0
+    [ -f "$1/.claude/agents/sysadmin.md" ] && return 0   # legacy-признак (до 2.0)
+    return 1
+}
+
 locate_sysadmin_root() {
     SYSADMIN_ROOT=""
 
@@ -139,14 +150,14 @@ locate_sysadmin_root() {
         "$HOME/sysadmin" \
         "$HOME/work/sysadmin" \
         "$HOME/projects/sysadmin"; do
-        if [ -f "$candidate/.claude/agents/sysadmin.md" ]; then
+        if _is_sysadmin_root "$candidate"; then
             SYSADMIN_ROOT="$(cd "$candidate" && pwd)"
             return 0
         fi
     done
 
     # 3. Эвристика — может, мы внутри самого sysadmin/?
-    if [ -f "./.claude/agents/sysadmin.md" ]; then
+    if _is_sysadmin_root "."; then
         SYSADMIN_ROOT="$(pwd)"
         return 0
     fi
