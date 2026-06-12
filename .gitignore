@@ -37,3 +37,10 @@ sysadmin-config.json
 # Временные артефакты ревизий и audit-сессий (Explore-агенты,
 # промежуточные отчёты) — не часть репо.
 .audit-tmp/
+
+# Живой слой VPN-знаний (_live, TTL 14 дней) — у каждого пользователя свой,
+# обновляется /refresh-vpn-knowledge. В git — только шаблоны *.example.md
+# и .gitkeep (задача 0.6 рефакторинга, P13: иначе у пользователя навсегда
+# грязное дерево и конфликты при обновлении мозга).
+.claude/knowledge/networking/_live/*.md
+!.claude/knowledge/networking/_live/*.example.md
