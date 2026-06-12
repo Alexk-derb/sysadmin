@@ -150,7 +150,7 @@ sysadmin/                          ← публичный репо (этот). �
 │       ├── cleanup-existing-server/
 │       └── migrate-server-to-server/
 │
-├── decisions/                     ← ADR-канон + 13 архитектурных решений
+├── decisions/                     ← ADR-канон + 14 архитектурных решений
 │   ├── 0000-template.md
 │   ├── 0001-skill-canon.md
 │   ├── 0002-persona-canon.md
@@ -164,7 +164,8 @@ sysadmin/                          ← публичный репо (этот). �
 │   ├── 0010-hwid-locked-subscriptions.md
 │   ├── 0011-balancer-single-country.md
 │   ├── 0012-bump-persona-core-cap-460.md
-│   └── 0013-config-split-brain-vs-infra.md   ← расщепление конфига: мозг + карта
+│   ├── 0013-config-split-brain-vs-infra.md   ← расщепление конфига: мозг + карта
+│   └── 0014-red-zone-loss-line-anti-copypaste.md   ← барьер необратимых операций
 │
 ├── agent-config.json              ← твой личный конфиг МОЗГА (оператор, проекты; в .gitignore)
 ├── agent-config.example.json      ← публичный шаблон конфига мозга
