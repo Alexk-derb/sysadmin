@@ -167,6 +167,7 @@ Helper-скрипты: `~/.local/bin/tavily-search.sh` и `tavily-extract.sh` �
 | Шаблон ADR для своих решений | `decisions/0000-template.md` |
 | Как сообщить о баге или предложить улучшение | `CONTRIBUTING.md` |
 | История версий мозга агента | `CHANGELOG.md` |
+| Как обновиться и что сделать при переходе версии | `UPGRADE.md` |
 | Лицензия | `LICENSE` |
 
 ---
