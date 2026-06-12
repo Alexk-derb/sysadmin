@@ -80,14 +80,28 @@ allowed-tools: Bash, Read, Write
 
 ```bash
 source "$SYSADMIN_ROOT/.claude/skills/_lib/find-config.sh"
-find_sysadmin_config optional         # WARN + defaults если нет
+find_sysadmin_config optional         # WARN + defaults если нет; $CONFIG = infra-config.json
+find_brain_config || true             # $BRAIN_CONFIG = agent-config.json (язык)
 
-INFRA_DIR=""
-if [ "$SYSADMIN_CONFIG_FOUND" = "true" ]; then
+# language — агент-поле (ADR-0013): живёт в мозге ($BRAIN_CONFIG).
+# Legacy-совместимость: если мозга нет — top-level .language из $CONFIG.
+REPORT_LANGUAGE=""
+[ -n "${BRAIN_CONFIG:-}" ] && REPORT_LANGUAGE="$(jq -r '.operator.language // empty' "$BRAIN_CONFIG" 2>/dev/null)"
+[ -z "$REPORT_LANGUAGE" ] && [ -n "${CONFIG:-}" ] && [ -f "${CONFIG:-}" ] && REPORT_LANGUAGE="$(jq -r '.language // empty' "$CONFIG" 2>/dev/null)"
+[ -z "$REPORT_LANGUAGE" ] && REPORT_LANGUAGE="ru"
+
+# Папка инфры активного проекта (ADR-0013): её знает реестр projects[] в мозге —
+# resolve_active_project (внутри find_sysadmin_config) уже выставил $ACTIVE_INFRA_ROOT.
+INFRA_DIR="${ACTIVE_INFRA_ROOT:-}"
+# Legacy-совместимость: если мозга нет, но найден старый единый конфиг —
+# берём infrastructure.root_path и резолвим относительно каталога конфига.
+if [ -z "$INFRA_DIR" ] && [ "$SYSADMIN_CONFIG_FOUND" = "true" ]; then
     RAW_ROOT="$(get_config_field infrastructure.root_path "")"
     [ -n "$RAW_ROOT" ] && INFRA_DIR="$(resolve_infra_path "$RAW_ROOT" "$CONFIG" || true)"
-    REPORT_LANGUAGE="$(get_config_field language ru)"
-    # Подсказка имени провайдера, если оператор его задавал в vpn-блоке.
+fi
+
+# Подсказка имени провайдера, если оператор его задавал в vpn-блоке (инфра-поле → $CONFIG).
+if [ "$SYSADMIN_CONFIG_FOUND" = "true" ]; then
     PROVIDER_SLUG="${PROVIDER_SLUG:-$(get_config_field vpn.provider_slug subscription)}"
 fi
 ```

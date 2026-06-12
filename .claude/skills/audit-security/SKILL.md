@@ -58,12 +58,26 @@ allowed-tools: Bash, Read
 ```bash
 source "$SYSADMIN_ROOT/.claude/skills/_lib/find-config.sh"
 
-find_sysadmin_config optional   # OPTIONAL: defaults + WARN если не найден
+find_sysadmin_config optional   # OPTIONAL: $CONFIG = infra-config.json (инфра-поля)
+find_brain_config || true       # ставит $BRAIN_CONFIG = agent-config.json (агент-поля)
+
+# Агент-поля (ADR-0013): language/operator/secrets живут в мозге ($BRAIN_CONFIG).
+# Legacy-совместимость: если мозга нет (старый единый конфиг не мигрирован) —
+# берём из $CONFIG, где они есть в legacy-формате.
+#   ВНИМАНИЕ: language переехал в .operator.language (мозг);
+#   в legacy он был top-level .language — поэтому два разных jq-пути.
+get_agent_field() {  # $1=jq-путь-в-мозге, $2=jq-путь-в-legacy, $3=default
+  local v=""
+  [ -n "${BRAIN_CONFIG:-}" ] && v=$(jq -r "$1 // empty" "$BRAIN_CONFIG" 2>/dev/null)
+  [ -z "$v" ] && [ -n "${CONFIG:-}" ] && [ -f "${CONFIG:-}" ] && v=$(jq -r "$2 // empty" "$CONFIG" 2>/dev/null)
+  [ -z "$v" ] && v="$3"
+  echo "$v"
+}
 
 # CLI-override > конфиг > дефолт
-REPORT_LANGUAGE="${REPORT_LANGUAGE:-$(get_config_field language ru)}"
-SERVER="${SERVER:-$(get_config_field 'servers[0].ssh_alias')}"
-SECRETS_MANAGER="${SECRETS_MANAGER:-$(get_config_field secrets.manager)}"
+REPORT_LANGUAGE="${REPORT_LANGUAGE:-$(get_agent_field '.operator.language' '.language' ru)}"
+SERVER="${SERVER:-$(get_config_field 'servers[0].ssh_alias')}"   # инфра-поле → $CONFIG
+SECRETS_MANAGER="${SECRETS_MANAGER:-$(get_agent_field '.secrets.manager' '.secrets.manager' '')}"
 ```
 
 Если по какой-то причине `$SYSADMIN_ROOT` не задан — извлеки его из bridge-файла:

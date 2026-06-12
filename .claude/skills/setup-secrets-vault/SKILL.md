@@ -86,15 +86,27 @@ source "$SYSADMIN_ROOT/.claude/skills/_lib/find-config.sh"
 
 # silent: без WARN, $CONFIG="" если не найден
 find_sysadmin_config silent
+find_brain_config || true       # ставит $BRAIN_CONFIG = agent-config.json (агент-поля)
+
+# secrets.manager — агент-поле (ADR-0013): живёт в мозге ($BRAIN_CONFIG).
+# Legacy-совместимость: если мозга нет — читаем из $CONFIG (старый единый формат),
+# где secrets.manager лежал по тому же jq-пути.
+get_agent_field() {  # $1=jq-путь, $2=default (путь одинаков в мозге и legacy)
+  local v=""
+  [ -n "${BRAIN_CONFIG:-}" ] && v=$(jq -r "$1 // empty" "$BRAIN_CONFIG" 2>/dev/null)
+  [ -z "$v" ] && [ -n "${CONFIG:-}" ] && [ -f "${CONFIG:-}" ] && v=$(jq -r "$1 // empty" "$CONFIG" 2>/dev/null)
+  [ -z "$v" ] && v="$2"
+  echo "$v"
+}
 
 VAULT_FROM_CONFIG=""
-if [ "$SYSADMIN_CONFIG_FOUND" = "true" ] && [ "${FORCE:-0}" != "1" ]; then
-    VAULT_FROM_CONFIG=$(get_config_field secrets.manager)
+if [ "${FORCE:-0}" != "1" ]; then
+    VAULT_FROM_CONFIG=$(get_agent_field '.secrets.manager' '')
 fi
 
 if [ -n "$VAULT_FROM_CONFIG" ]; then
     VAULT_TYPE="$VAULT_FROM_CONFIG"
-    echo "В sysadmin-config.json указан secrets.manager=$VAULT_TYPE — пропускаю Decision Tree."
+    echo "В agent-config.json указан secrets.manager=$VAULT_TYPE — пропускаю Decision Tree."
     echo "Если хочешь поменять — запусти скилл с --force или /sysadmin-init --reconfigure."
     # Переходим сразу к Шагу 3 (установка)
 fi

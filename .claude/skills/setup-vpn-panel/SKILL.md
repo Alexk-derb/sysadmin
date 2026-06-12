@@ -91,16 +91,31 @@ STRICT/OPTIONAL скиллов — алгоритм идентичен Cold Star
 source "$SYSADMIN_ROOT/.claude/skills/_lib/find-config.sh"
 
 # STRICT: exit 1 если конфига нет
-find_sysadmin_config strict
+find_sysadmin_config strict       # $CONFIG = infra-config.json (servers/vpn)
+find_brain_config || true         # $BRAIN_CONFIG = agent-config.json (secrets/язык)
+
+# Агент-поля (ADR-0013): secrets.manager и язык живут в мозге ($BRAIN_CONFIG).
+# Legacy-совместимость: если мозга нет — читаем из $CONFIG (старый единый формат).
+#   language переехал в .operator.language (мозг); в legacy — top-level .language.
+get_agent_field() {  # $1=jq-путь-в-мозге, $2=jq-путь-в-legacy, $3=default
+  local v=""
+  [ -n "${BRAIN_CONFIG:-}" ] && v=$(jq -r "$1 // empty" "$BRAIN_CONFIG" 2>/dev/null)
+  [ -z "$v" ] && [ -n "${CONFIG:-}" ] && [ -f "${CONFIG:-}" ] && v=$(jq -r "$2 // empty" "$CONFIG" 2>/dev/null)
+  [ -z "$v" ] && v="$3"
+  echo "$v"
+}
 
 # secrets.manager обязателен — без него непонятно, куда сохранять креды панели
-require_config_field "secrets.manager" \
-    "Запусти /sysadmin-init --reconfigure и укажи менеджер паролей (keychain / pass / bw / op)."
+SECRETS_MANAGER=$(get_agent_field '.secrets.manager' '.secrets.manager' '')
+if [ -z "$SECRETS_MANAGER" ]; then
+    echo "ERROR: не задан secrets.manager (ни в agent-config.json, ни в legacy-конфиге)." >&2
+    echo "       Запусти /sysadmin-init --reconfigure и укажи менеджер паролей (keychain / pass / bw / op)." >&2
+    exit 1
+fi
 
-# Чтение значений
-SECRETS_MANAGER=$(get_config_field secrets.manager)
-SERVER_ALIAS_FROM_CONFIG=$(get_config_field 'servers[0].alias')
-REPORT_LANGUAGE=$(get_config_field language ru)
+# Остальные значения
+SERVER_ALIAS_FROM_CONFIG=$(get_config_field 'servers[0].alias')   # инфра-поле → $CONFIG
+REPORT_LANGUAGE=$(get_agent_field '.operator.language' '.language' ru)
 ```
 
 После успешного чтения переходим к Шагу 0 (Pre-check на сервере).

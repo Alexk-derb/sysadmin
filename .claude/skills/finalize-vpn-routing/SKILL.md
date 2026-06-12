@@ -82,7 +82,19 @@ allowed-tools: Bash, Read, Edit, Write
 
 ```bash
 source "$SYSADMIN_ROOT/.claude/skills/_lib/find-config.sh"
-find_sysadmin_config strict
+find_sysadmin_config strict       # $CONFIG = infra-config.json (vpn.*)
+find_brain_config || true         # $BRAIN_CONFIG = agent-config.json (secrets.manager)
+
+# secrets.manager — агент-поле (ADR-0013): живёт в мозге ($BRAIN_CONFIG).
+# Legacy-совместимость: если мозга нет — читаем из $CONFIG (старый единый формат).
+get_agent_field() {  # $1=jq-путь, $2=default (путь одинаков в мозге и legacy)
+  local v=""
+  [ -n "${BRAIN_CONFIG:-}" ] && v=$(jq -r "$1 // empty" "$BRAIN_CONFIG" 2>/dev/null)
+  [ -z "$v" ] && [ -n "${CONFIG:-}" ] && [ -f "${CONFIG:-}" ] && v=$(jq -r "$1 // empty" "$CONFIG" 2>/dev/null)
+  [ -z "$v" ] && v="$2"
+  echo "$v"
+}
+
 require_config_field "vpn.panel_url" \
     "3X-UI ещё не установлен. Сначала /setup-vpn-panel SSH_TARGET=... DOMAIN=..."
 require_config_field "vpn.panel_web_base_path" \
@@ -93,8 +105,11 @@ PANEL_WEB_BASE_PATH=$(get_config_field vpn.panel_web_base_path)
 PANEL_DOMAIN="${PANEL_DOMAIN:-$(echo "$PANEL_URL" | sed -E 's|https?://||; s|:.*$||')}"
 PANEL_PORT="${PANEL_PORT:-$(echo "$PANEL_URL" | sed -E 's|https?://[^:]+:||; s|/.*$||')}"
 WEB_BASE_PATH="${WEB_BASE_PATH:-$PANEL_WEB_BASE_PATH}"
-SECRETS_MANAGER=$(get_config_field secrets.manager keychain)
-INFRA_DIR="$(get_config_field infrastructure.root_path)"
+SECRETS_MANAGER=$(get_agent_field '.secrets.manager' keychain)
+# Папка инфры активного проекта (ADR-0013): её знает реестр projects[] в мозге.
+# Legacy-совместимость: если мозга нет — старый infrastructure.root_path из $CONFIG.
+INFRA_DIR="${ACTIVE_INFRA_ROOT:-}"
+[ -z "$INFRA_DIR" ] && INFRA_DIR="$(get_config_field infrastructure.root_path)"
 ```
 
 Если панель не отвечает (`curl -sI` ≠ 200) — STOP с конкретной причиной (возможно

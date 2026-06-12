@@ -117,9 +117,21 @@ STRICT/OPTIONAL скиллов — алгоритм идентичен Cold Star
 source "$SYSADMIN_ROOT/.claude/skills/_lib/find-config.sh"
 
 # STRICT: exit 1 если конфига нет
-find_sysadmin_config strict
+find_sysadmin_config strict       # $CONFIG = infra-config.json (vpn.*)
+find_brain_config || true         # $BRAIN_CONFIG = agent-config.json (secrets/язык)
 
-# vpn.panel_url и vpn.panel_web_base_path обязательны
+# Агент-поля (ADR-0013): secrets.manager и язык живут в мозге ($BRAIN_CONFIG).
+# Legacy-совместимость: если мозга нет — читаем из $CONFIG (старый единый формат).
+#   language переехал в .operator.language (мозг); в legacy — top-level .language.
+get_agent_field() {  # $1=jq-путь-в-мозге, $2=jq-путь-в-legacy, $3=default
+  local v=""
+  [ -n "${BRAIN_CONFIG:-}" ] && v=$(jq -r "$1 // empty" "$BRAIN_CONFIG" 2>/dev/null)
+  [ -z "$v" ] && [ -n "${CONFIG:-}" ] && [ -f "${CONFIG:-}" ] && v=$(jq -r "$2 // empty" "$CONFIG" 2>/dev/null)
+  [ -z "$v" ] && v="$3"
+  echo "$v"
+}
+
+# vpn.panel_url и vpn.panel_web_base_path обязательны (инфра-поля → $CONFIG)
 require_config_field "vpn.panel_url" \
     "Это значит 3X-UI ещё не установлен. Сначала запусти /setup-vpn-panel SSH_TARGET=... DOMAIN=..."
 require_config_field "vpn.panel_web_base_path" \
@@ -131,8 +143,8 @@ PANEL_WEB_BASE_PATH=$(get_config_field vpn.panel_web_base_path)
 PANEL_DOMAIN="${PANEL_DOMAIN:-$(echo "$PANEL_URL" | sed -E 's|https?://||; s|:.*$||')}"
 PANEL_PORT="${PANEL_PORT:-$(echo "$PANEL_URL" | sed -E 's|https?://[^:]+:||; s|/.*$||')}"
 WEB_BASE_PATH="${WEB_BASE_PATH:-$PANEL_WEB_BASE_PATH}"
-SECRETS_MANAGER=$(get_config_field secrets.manager keychain)
-REPORT_LANGUAGE=$(get_config_field language ru)
+SECRETS_MANAGER=$(get_agent_field '.secrets.manager' '.secrets.manager' keychain)
+REPORT_LANGUAGE=$(get_agent_field '.operator.language' '.language' ru)
 
 # Роль сервера — источник правды для протокола inbound и для guard'а.
 # Записывается /setup-vpn-panel в vpn.server_role. Может быть null (старый
@@ -263,7 +275,11 @@ INBOUND_LISTEN_PORT="$INBOUND_PORT" \
 здесь логику извлечения **НЕ дублирует** — он работает с уже готовым JSON.
 
 ```bash
-INFRA_DIR="$(get_config_field infrastructure.root_path)"
+# Папка инфры активного проекта (ADR-0013): её знает реестр projects[] в мозге —
+# resolve_active_project (внутри find_sysadmin_config) уже выставил $ACTIVE_INFRA_ROOT.
+# Legacy-совместимость: если мозга нет — старый путь infrastructure.root_path из $CONFIG.
+INFRA_DIR="${ACTIVE_INFRA_ROOT:-}"
+[ -z "$INFRA_DIR" ] && INFRA_DIR="$(get_config_field infrastructure.root_path)"
 SUBS_FILE="$INFRA_DIR/inventory/shared/vpn-subscriptions/${PROVIDER_SLUG:-subscription}.json"
 ```
 

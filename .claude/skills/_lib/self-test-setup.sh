@@ -11,12 +11,15 @@
 #   2. CONFIG_PATH существует и читается.
 #   3. Это валидный JSON (jq empty).
 #   4. Проходит JSON Schema (validate-config.sh).
-#   5. Папка infra/ (infrastructure.root_path) существует.
+#   5. Папка инфры проекта существует (ADR-0013: projects[].infra_root в мозге,
+#      либо legacy .infrastructure.root_path в старом всё-в-одном конфиге).
 #   6. bridge-файл ~/.claude/agents/sysadmin.md на месте (агент вызываем из любой папки).
 #
-# Использование:
+# Использование (ADR-0013 — ДВА файла):
 #   source "<...>/_lib/self-test-setup.sh"
-#   self_test_setup "$CONFIG_PATH" "$SYSADMIN_ROOT"
+#   self_test_setup "$AGENT_CONFIG_PATH" "$SYSADMIN_ROOT" "$INFRA_CONFIG_PATH"
+#   # $3 (infra-config.json) — опционален: если не передан, путь берётся из projects[].
+#   # Совместимость: можно передать и старый одиночный sysadmin-config.json как $1.
 #   # rc=0 — всё ок (можно печатать «Готово»); rc=1 — вердикт уже выведен, НЕ говори «Готово».
 
 [ -n "${_SYSADMIN_SELFTEST_LOADED:-}" ] && return 0
@@ -51,14 +54,22 @@ $problems
 EOF
 }
 
-# Главная функция. $1 = CONFIG_PATH, $2 = SYSADMIN_ROOT.
+# Главная функция. $1 = CONFIG_PATH (agent-config.json или legacy sysadmin-config.json),
+# $2 = SYSADMIN_ROOT, $3 = INFRA_CONFIG_PATH (опц., infra-config.json активного проекта).
 # Возврат: 0 — всё работает; 1 — есть проблемы (вердикт напечатан).
 self_test_setup() {
     local config_path="$1"
     local sysadmin_root="$2"
+    local infra_config_path="${3:-}"
     local problems=""
     # helper: дописать проблему в список (bash не умеет local-функции, поэтому через переменную)
     _stp_add() { problems="${problems}  • $1"$'\n'; }
+
+    # Определяем «вид» переданного $1: новый мозг (agent-config) или legacy всё-в-одном.
+    local is_brain="false"
+    case "$config_path" in
+        *agent-config*) is_brain="true" ;;
+    esac
 
     # 1. bash + jq
     [ -n "${BASH_VERSION:-}" ] || _stp_add "Нет bash (оболочка не bash — нужен Git Bash на Windows)."
@@ -68,26 +79,39 @@ self_test_setup() {
 
     # 2. CONFIG_PATH существует и читается
     if [ -z "$config_path" ] || [ ! -f "$config_path" ]; then
-        _stp_add "Файл sysadmin-config.json не создан (ожидался: ${config_path:-<путь не задан>})."
+        _stp_add "Файл конфига не создан (ожидался: ${config_path:-<путь не задан>})."
     else
         # 3. валидный JSON
         if command -v jq >/dev/null 2>&1 && ! jq empty "$config_path" >/dev/null 2>&1; then
             _stp_add "Файл конфига есть, но это не валидный JSON (повреждён при записи)."
         fi
-        # 4. JSON Schema
+        # 4. JSON Schema — validate-config.sh сам определит схему по имени файла.
         local validator="$sysadmin_root/.claude/skills/sysadmin-init/scripts/validate-config.sh"
         if [ -f "$validator" ]; then
             if ! bash "$validator" "$config_path" >/dev/null 2>&1; then
                 _stp_add "Конфиг не проходит проверку по схеме (какое-то поле заполнено неверно)."
             fi
+            # Если передан второй файл (infra-config) — валидируем и его.
+            if [ -n "$infra_config_path" ] && [ -f "$infra_config_path" ]; then
+                if ! bash "$validator" "$infra_config_path" >/dev/null 2>&1; then
+                    _stp_add "Конфиг инфры не проходит проверку по схеме: $infra_config_path"
+                fi
+            fi
         fi
-        # 5. папка infra/ существует.
-        # Резолвим root_path ОТНОСИТЕЛЬНО КАТАЛОГА КОНФИГА (канон v1.4.2), а не от
-        # cwd процесса — иначе относительный путь типа «../infra» ложно проваливает
-        # проверку при запуске из произвольной папки (баг до v1.4.2).
+        # 5. папка инфры проекта существует.
         if command -v jq >/dev/null 2>&1; then
             local raw infra
-            raw="$(jq -r '.infrastructure.root_path // empty' "$config_path" 2>/dev/null)"
+            if [ "$is_brain" = "true" ]; then
+                # ADR-0013: путь к инфре — в projects[]. Берём проект default_project.
+                local def
+                def="$(jq -r '.default_project // empty' "$config_path" 2>/dev/null)"
+                if [ -n "$def" ]; then
+                    raw="$(jq -r --arg id "$def" '.projects[]? | select(.id==$id) | .infra_root // empty' "$config_path" 2>/dev/null)"
+                fi
+            else
+                # legacy всё-в-одном — старое поле.
+                raw="$(jq -r '.infrastructure.root_path // empty' "$config_path" 2>/dev/null)"
+            fi
             if [ -n "$raw" ]; then
                 if command -v resolve_infra_path >/dev/null 2>&1; then
                     # resolve_infra_path печатает абсолютный путь; rc=1 если папки нет.
@@ -123,7 +147,7 @@ self_test_setup() {
 
 ✅ Самопроверка пройдена — всё на месте и работает:
    • bash + jq: OK
-   • конфиг записан и валиден: $config_path
+   • конфиг(и) записан(ы) и валиден(ы): $config_path${infra_config_path:+ + $infra_config_path}
    • папка инфраструктуры существует
    • bridge-файл на месте (@sysadmin доступен из любой папки)
 EOF

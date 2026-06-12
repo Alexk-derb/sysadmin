@@ -9,8 +9,9 @@
 
 Этот репозиторий — **только мозг агента**. Реальные данные о твоей инфре (карта серверов,
 БД, домены, бэкапы, ADR, инциденты) живут в **отдельной** папке `infra/` рядом, в
-**другом** git-репозитории (приватном). Связь — через поле `infrastructure.root_path` в твоём
-личном `sysadmin-config.json`.
+**другом** git-репозитории (приватном). Связь — через реестр проектов `projects[]` в твоём
+личном `agent-config.json` (мозг агента в `sysadmin/`): каждый проект указывает на свою
+папку инфры (`infra_root`), где лежит её карта `infra-config.json` (см. ADR-0013).
 
 ---
 
@@ -33,7 +34,7 @@
 
 - **Секреты никогда не пишутся в репу** — только ссылки на менеджер паролей оператора
   (Keychain macOS / Bitwarden / 1Password / pass — указывается в
-  `sysadmin-config.json`).
+  `agent-config.json`, поле `secrets.manager`).
 - Пароли, токены, SSH-ключи, `.env` с реальными значениями — в `.gitignore` и нигде в git.
 - При сомнении — добавь в `.gitignore` до `git add`.
 - **Секрет, который оператор ввёл в прямой сессии с агентом** (CLI / IDE / desktop /
@@ -43,8 +44,11 @@
 - Деструктивные команды (`rm -rf`, `DROP DATABASE`, `git push --force`, `git reset --hard`,
   `docker rm -f`) — только через 4-шаговую процедуру красной зоны агента (см. персону
   `.claude/agents/sysadmin.md`).
-- **Личный конфиг `sysadmin-config.json`** — в `.gitignore` этого репо первым правилом.
-  Содержит реальные SSH-алиасы, домены, имя Telegram-бота — публиковать НЕЛЬЗЯ.
+- **Два личных конфига — оба в `.gitignore`** (ADR-0013). `agent-config.json` (мозг,
+  в `sysadmin/`) — имя оператора, реальные пути к проектам, менеджер паролей. В `.gitignore`
+  этого репо первым правилом. `infra-config.json` (карта, в папке проекта `infra/`) — реальные
+  SSH-алиасы, домены, имя Telegram-бота — в `.gitignore` приватного репо инфры. Оба
+  публиковать НЕЛЬЗЯ; в GitHub уезжают только обезличенные `*.example.json` + `*.schema.json`.
 
 ---
 
@@ -155,9 +159,11 @@ Helper-скрипты: `~/.local/bin/tavily-search.sh` и `tavily-extract.sh` �
 | Как настроить агента под свой проект | `.claude/skills/sysadmin-init/SKILL.md` (запуск: `/sysadmin-init`) |
 | Персона агента (характер, регламенты, протоколы) | `.claude/agents/sysadmin.md` |
 | 20 скиллов агента (готовые процедуры) | `.claude/skills/` |
-| Шаблон конфига агента (публичный, обезличенный) | `sysadmin-config.example.json` |
-| Формальный контракт конфига | `sysadmin-config.schema.json` |
-| Личный конфиг (создаётся `/sysadmin-init`) | `sysadmin-config.json` (в `.gitignore`) |
+| Шаблон + контракт конфига МОЗГА (оператор, проекты) | `agent-config.example.json` + `agent-config.schema.json` |
+| Шаблон + контракт конфига КАРТЫ инфры (серверы, vpn) | `infra-config.example.json` + `infra-config.schema.json` |
+| Личный конфиг мозга (создаётся `/sysadmin-init`) | `agent-config.json` в `sysadmin/` (в `.gitignore`) |
+| Личный конфиг карты (создаётся `/sysadmin-init`) | `infra-config.json` в папке проекта (в `.gitignore`) |
+| Почему конфиг расщеплён на мозг и карту | `decisions/0013-config-split-brain-vs-infra.md` |
 | Шаблон ADR для своих решений | `decisions/0000-template.md` |
 | Как сообщить о баге или предложить улучшение | `CONTRIBUTING.md` |
 | История версий мозга агента | `CHANGELOG.md` |
@@ -165,25 +171,53 @@ Helper-скрипты: `~/.local/bin/tavily-search.sh` и `tavily-extract.sh` �
 
 ---
 
-## ⚡ Конфигурация агента — `sysadmin-config.json`
+## ⚡ Конфигурация агента — ДВА конфига: мозг и карта (ADR-0013)
 
-В корне репо лежит личная конфигурация агента (`sysadmin-config.json`, в `.gitignore`).
-Это паспорт оператора: язык, имя, менеджер паролей, какие подсистемы включены (мониторинг,
-бэкапы, Telegram), какой сервер, **где живёт твоя папка с инфрой** (`infrastructure.root_path`). Агент
-читает его **первым шагом Cold Start** (см. раздел 7.1 персоны), до чтения inventory.
+Единый конфиг расщеплён на **два файла с разной ответственностью**. Это снимает
+рекурсию «курица-яйцо» (указатель на инфру лежал внутри самой инфры) и закрывает
+сценарий «несколько проектов». Подробное обоснование — `decisions/0013-config-split-brain-vs-infra.md`.
 
-Публичный шаблон `sysadmin-config.example.json` + JSON Schema
-`sysadmin-config.schema.json` (валидация в редакторе и через `check-jsonschema`).
-Создать или перенастроить — через скилл `/sysadmin-init` (или `/sysadmin-init --reconfigure`).
+**`agent-config.json` — МОЗГ агента.** Живёт в корне `sysadmin/` (это «дом агента»,
+одно известное место без перебора). Отвечает за самого агента, а не за сервер:
+- `operator` — имя, язык (`ru`/`en`), таймзона;
+- `secrets` — менеджер паролей оператора (`keychain`/`bitwarden`/`1password`/`pass`/`keepassxc`/`other`);
+- `projects[]` — **реестр проектов** (массив): для каждого `id`, `title`, `infra_root`
+  (путь к папке инфры), опционально `config` (путь к его `infra-config.json`);
+- `default_project` — id активного по умолчанию проекта;
+- `interaction` — режимы взаимодействия (зарезервировано, наполняется по мере нужды);
+- `meta.onboarding` — состояние знакомства (`/sysadmin-meet`).
+
+**`infra-config.json` — КАРТА инфры (оглавление / Table of Contents).** Живёт в папке
+проекта (`infra_root`), рядом с `inventory/`, `knowledge/`, `decisions/`. Описывает
+конкретный сервер/проект, БЕЗ агент-полей:
+- `servers`, `monitoring`, `backups`, `notifications`, `vpn` — как раньше;
+- опциональный блок `map` — указатели вглубь данных («vpn → inventory/hosts/.../vpn-3xui.md»);
+- БЕЗ `language`/`operator`/`secrets` (они в мозге) и БЕЗ `infrastructure.root_path`
+  (путь к папке знает реестр `projects[]` в мозге).
+
+**Граница простыми словами:** мозг = «как агент работает и с кем», карта = «что на
+сервере». Имена файлов больше не врут.
+
+**Cold Start (Шаг 0)** читает `sysadmin/agent-config.json` напрямую → сразу знает
+оператора, язык, список проектов (**без перебора по диску**). Берёт `default_project` →
+его `infra_root` → читает `infra-config.json` (оглавление). Перебор по типичным путям
+остался **только fallback** для нового пользователя без `agent-config.json`.
+
+Публичные шаблоны + JSON Schema (валидация в редакторе и через `check-jsonschema`):
+`agent-config.example.json` + `agent-config.schema.json` и `infra-config.example.json` +
+`infra-config.schema.json`. Создать или перенастроить (включая миграцию старого единого
+`sysadmin-config.json`) — через скилл `/sysadmin-init` (или `/sysadmin-init --reconfigure`):
+он детектит legacy-формат и предлагает расщепить на два файла.
 
 **Идеальная последовательность для нового пользователя:**
 
 1. `git clone <github-url> sysadmin && cd sysadmin` — клонируешь публичный репо
 2. `/sysadmin-meet` — знакомство ELI5, ~20 минут (что такое агент, что умеет, как работать,
    безопасность, границы)
-3. `/sysadmin-init` — техническая настройка под конкретный проект, ~5 минут. На вопросе
-   про `infrastructure.root_path` указываешь — где у тебя будет жить твоя папка с инфрой (карта
-   серверов, ADR, бэкапы). Папка может ещё не существовать — `/sysadmin-init` её создаст.
+3. `/sysadmin-init` — техническая настройка под конкретный проект, ~5 минут. Указываешь,
+   где будет жить твоя папка с инфрой (она попадёт в реестр `projects[]` как `infra_root`).
+   Папка может ещё не существовать — `/sysadmin-init` её создаст. На выходе — два конфига:
+   `agent-config.json` (мозг, в `sysadmin/`) и `infra-config.json` (карта, в папке проекта).
 4. Реальная работа: `@sysadmin привет, познакомься с моим сервером`
 
 Скилл `/sysadmin-meet` идемпотентен, ничего не меняет, можно перезапускать через месяц

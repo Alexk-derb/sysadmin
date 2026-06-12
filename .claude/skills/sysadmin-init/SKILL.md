@@ -1,10 +1,13 @@
 ---
 name: sysadmin-init
 description: |
-  Интерактивная настройка/перенастройка агента-сисадмина под проект: создаёт sysadmin-config.json
-  (язык, менеджер паролей, серверы, мониторинг-стек, бэкапы, Telegram, VPN-блок) с валидацией по JSON Schema.
+  Интерактивная настройка/перенастройка агента-сисадмина под проект: создаёт ДВА конфига —
+  agent-config.json (мозг: оператор, язык, менеджер паролей, реестр проектов) в корне sysadmin/
+  и infra-config.json (карта: серверы, мониторинг-стек, бэкапы, Telegram, VPN-блок) в папке проекта,
+  оба с валидацией по своим JSON Schema (ADR-0013).
   Режимы: первичный setup (нет конфига → интервью), идемпотентный no-op (конфиг есть → подсказка),
-  --reconfigure (показывает текущее, спрашивает что менять).
+  --reconfigure (показывает текущее, спрашивает что менять), миграция legacy sysadmin-config.json
+  (старый всё-в-одном → расщепление на два файла).
   Триггеры: «настрой агента», «первый запуск», «init agent», «/sysadmin-init», «хочу как у Василия»,
   «перенастрой конфиг», «поменять язык агента», «переключить менеджер паролей».
   НЕ для знакомства с агентом (sysadmin-meet); НЕ для настройки серверов (bootstrap-new-server).
@@ -13,11 +16,20 @@ allowed-tools: AskUserQuestion, Bash, Read, Write, Edit, WebSearch
 
 <role>
 Я провожу интерактивную первичную настройку и перенастройку агента-сисадмина под проект
-оператора. На выходе — `sysadmin-config.json` в корне репо, валидный по JSON Schema.
-Без этого конфига часть скиллов агента, требующих контекст оператора
-(install-monitoring-stack, setup-backups, audit-security, setup-secrets-vault и
-другие, читающие конфиг), останавливаются с понятным сообщением «запусти
-/sysadmin-init». Я — единственный официальный путь создания и обновления этого конфига.
+оператора. На выходе — ДВА конфига (ADR-0013):
+
+- **`agent-config.json`** (МОЗГ агента) — в корне публичного репо `sysadmin/`. Содержит
+  оператора (имя, язык, таймзона), менеджер паролей, реестр проектов-инфраструктур
+  (`projects[]`) и какой из них активен по умолчанию (`default_project`), мета-онбоардинг.
+- **`infra-config.json`** (КАРТА инфры) — в папке проекта (`infra_root`), рядом с
+  `inventory/`, `knowledge/`, `decisions/`. Содержит серверы, мониторинг, бэкапы,
+  Telegram, VPN, опциональное оглавление `map`.
+
+Оба валидны по своим JSON Schema (`agent-config.schema.json`, `infra-config.schema.json`).
+Без них часть скиллов агента, требующих контекст оператора (install-monitoring-stack,
+setup-backups, audit-security, setup-secrets-vault и другие, читающие конфиг),
+останавливаются с понятным сообщением «запусти /sysadmin-init». Я — единственный
+официальный путь создания, обновления и миграции этих конфигов.
 
 Стиль общения — сеньор-ментор: на «ты», по-русски, простыми словами. Перед сложным
 техническим вопросом (менеджер паролей, мониторинг, бэкапы) даю мини-урок и рекомендацию,
@@ -33,7 +45,8 @@ allowed-tools: AskUserQuestion, Bash, Read, Write, Edit, WebSearch
 - Срабатывает триггер из description («настрой агента», «перенастрой конфиг» и т.п.).
 
 Что я предполагаю:
-- `sysadmin-config.schema.json` уже существует в корне репо (создан планом 09-02).
+- `agent-config.schema.json` и `infra-config.schema.json` уже существуют в корне репо
+  (созданы планом расщепления ADR-0013).
 - На машине оператора есть `jq` (≥ 1.6) — иначе скажу установить.
 - Желательно `check-jsonschema` — но я работаю и без него (fallback на минимальную
   валидацию через jq).
@@ -48,27 +61,35 @@ allowed-tools: AskUserQuestion, Bash, Read, Write, Edit, WebSearch
 - Не добавляю серверы в `inventory/` (это делает `inventory-scan`).
 - Не делаю multi-server в v1.0 — поддерживаю один сервер, остальные оператор добавит
   вручную в `servers[]` (схема это разрешает).
+- Не делаю multi-project в v1.0 — интервью заводит ОДИН проект в `projects[]` +
+  `default_project` = его id. Дополнительные проекты оператор добавит вручную в
+  `agent-config.json` (схема разрешает массив `projects[]` любой длины ≥ 1).
 </context>
 
 <goals>
 После выполнения должно стать TRUE:
-- В корне репо лежит валидный `sysadmin-config.json` (проверено `check-jsonschema` или
-  fallback-валидацией на jq).
-- Конфиг отражает реальные ответы оператора (не плейсхолдеры из `example.json`).
+- В корне `sysadmin/` лежит валидный `agent-config.json` (мозг), проверенный
+  `check-jsonschema` по `agent-config.schema.json` (или jq-fallback).
+- В папке проекта (`infra_root`) лежит валидный `infra-config.json` (карта),
+  проверенный по `infra-config.schema.json` (или jq-fallback).
+- Оба конфига отражают реальные ответы оператора (не плейсхолдеры из `example.json`).
 - При повторном запуске без флага → `no-op` + подсказка про `--reconfigure`.
 - При запуске с `--reconfigure` → по каждому ключу показываю текущее значение и спрашиваю
   «оставить или поменять».
+- Если найден старый `sysadmin-config.json` (всё-в-одном) — предлагаю миграцию:
+  расщепить на два новых файла, старый сохранить как `.bak`.
 - Оператор знает, что делать дальше — какие скиллы запускать в каком порядке.
-- Старый конфиг (если был) сохранён как `sysadmin-config.json.bak.YYYYMMDD-HHMMSS`.
+- Старые версии файлов (если были) сохранены как `<имя>.bak.YYYYMMDD-HHMMSS`.
 </goals>
 
 # Режимы работы
 
 | Режим | Команда | Поведение |
 |-------|---------|-----------|
-| Первичный setup | `/sysadmin-init` | Конфига нет → интервью → пишу sysadmin-config.json |
-| Идемпотентный no-op | `/sysadmin-init` | Конфиг уже есть → «уже настроено, для перенастройки — `/sysadmin-init --reconfigure`» → выход 0 |
-| Перенастройка | `/sysadmin-init --reconfigure` | Конфиг есть → показываю текущие значения → по каждому ключу «оставить или поменять» |
+| Первичный setup | `/sysadmin-init` | Конфигов нет → интервью → пишу agent-config.json (мозг) + infra-config.json (карта) |
+| Идемпотентный no-op | `/sysadmin-init` | Оба конфига уже есть → «уже настроено, для перенастройки — `/sysadmin-init --reconfigure`» → выход 0 |
+| Перенастройка | `/sysadmin-init --reconfigure` | Конфиги есть → показываю текущие значения → по каждому ключу «оставить или поменять» |
+| Миграция legacy | `/sysadmin-init` (детект) | Найден старый `sysadmin-config.json` (всё-в-одном) → предлагаю расщепить на два новых файла |
 
 # Процедура
 
@@ -122,7 +143,7 @@ locate_sysadmin_root || SYSADMIN_ROOT="$(cd "$LIB/../../.." && pwd)"
 
 > **⚠️ Важно про bash-блоки.** Claude Code может исполнять каждый ```bash-блок этого
 > скилла в ОТДЕЛЬНОМ процессе — тогда переменные (`$LIB`, `$SYSADMIN_ROOT`, `$WORKDIR`,
-> `$CONFIG_PATH`) и `PATH` между блоками **теряются**. Поэтому: **(1)** старайся держать
+> `$AGENT_PATH`, `$INFRA_CONFIG_PATH`) и `PATH` между блоками **теряются**. Поэтому: **(1)** старайся держать
 > работу одного раунда в одном блоке; **(2)** в начале каждого блока, который использует
 > helper'ы или jq, повтори мини-bootstrap (найти `$LIB` тем же циклом + `source
 > "$LIB/find-config.sh"`). `source find-config.sh`/`ensure-local-env.sh` при каждом вызове
@@ -131,31 +152,70 @@ locate_sysadmin_root || SYSADMIN_ROOT="$(cd "$LIB/../../.." && pwd)"
 > смену процесса, и перезапуск сессии — нужно лишь заново добавить папку в PATH, что и
 > делает source helper'а.
 
-### Шаг 0.1: Поиск конфига
+### Шаг 0.1: Поиск конфигов (ДВА файла, ADR-0013)
 
-**Важно про путь к конфигу:** `sysadmin-config.json` живёт в приватной папке `infra/` оператора (не в `sysadmin/`). Алгоритм поиска — тот же что в Cold Start Protocol персоны (см. `references/cold-start.md`):
+**Важно про два файла и их места:**
+- `agent-config.json` (МОЗГ) живёт в корне публичного репо `sysadmin/` — `$SYSADMIN_ROOT/agent-config.json`. Это «дом агента»: одно известное место, без перебора.
+- `infra-config.json` (КАРТА) живёт в папке проекта (`infra_root` из реестра `projects[]`).
 
-1. `./sysadmin-config.json` в текущем cwd (если оператор работает прямо в `infra/`).
-2. `../infra/sysadmin-config.json` (если cwd = `sysadmin/`).
-3. Типичные пути: `~/infra/`, `~/work/infra/`, `~/projects/infra/`.
-4. Если не нашёл — спрашиваю оператора путь к `infra/` (это будет первый вопрос).
+Алгоритм поиска — тот же что в Cold Start Protocol персоны (см. `references/cold-start.md`):
+основной путь — `find_brain_config` читает мозг → `resolve_active_project` достаёт активный
+проект → его `infra-config.json`. Перебор по типичным путям остаётся **только fallback**
+(новый пользователь / старая установка до миграции).
 
-Используй общий helper `_lib/find-config.sh` (уже подключён в Шаге 0.0) в режиме
-`silent` — при первичной установке конфига нет, это нормально. `$SYSADMIN_ROOT`
+Используй общий helper `_lib/find-config.sh` (уже подключён в Шаге 0.0). `$SYSADMIN_ROOT`
 уже определён в Шаге 0.0 через `locate_sysadmin_root` (кросс-платформенно).
 
 ```bash
-# $SYSADMIN_ROOT и find_sysadmin_config доступны из Шага 0.0 (там же source).
-# silent: $CONFIG="" если не найден (нормально для первичного setup)
-find_sysadmin_config silent
-CONFIG_PATH="$CONFIG"
-[ -n "$CONFIG_PATH" ] && CONFIG_EXISTS=true || CONFIG_EXISTS=false
+# $SYSADMIN_ROOT, find_brain_config, resolve_active_project, find_sysadmin_config —
+# доступны из Шага 0.0 (там же source find-config.sh).
 
-# Идемпотентный выход без правок
-if [ "$CONFIG_EXISTS" = "true" ] && [ "$ARG" != "--reconfigure" ]; then
-    echo "Уже настроено: cat \"$CONFIG_PATH\" (см. поля version/language/servers)."
+# 1) Есть ли уже МОЗГ (новый формат)?
+BRAIN_PATH=""; BRAIN_EXISTS=false
+INFRA_PATH=""; INFRA_CONFIG_PATH=""; INFRA_EXISTS=false
+if find_brain_config; then
+    BRAIN_PATH="$BRAIN_CONFIG"; BRAIN_EXISTS=true
+    if resolve_active_project ""; then
+        INFRA_PATH="$ACTIVE_INFRA_ROOT"
+        INFRA_CONFIG_PATH="$ACTIVE_INFRA_CONFIG"
+        INFRA_EXISTS=true
+    fi
+fi
+
+# 2) Детект LEGACY всё-в-одном (sysadmin-config.json) — только если мозга ещё нет.
+#    Перебираем те же типичные места, что и find-config.sh, но именно старое имя.
+LEGACY_PATH=""
+if [ "$BRAIN_EXISTS" != "true" ]; then
+    for cand in \
+        "./sysadmin-config.json" \
+        "../infra/sysadmin-config.json" \
+        "$HOME/infra/sysadmin-config.json" \
+        "$HOME/work/infra/sysadmin-config.json" \
+        "$HOME/projects/infra/sysadmin-config.json" \
+        "${INFRA_DIR:-/dev/null}/sysadmin-config.json"; do
+        if [ -f "$cand" ] && jq empty "$cand" >/dev/null 2>&1; then
+            LEGACY_PATH="$(cd "$(dirname "$cand")" && pwd)/$(basename "$cand")"
+            break
+        fi
+    done
+fi
+
+# 3) Идемпотентный выход без правок: оба новых файла на месте, флага нет.
+if [ "$BRAIN_EXISTS" = "true" ] && [ "$INFRA_EXISTS" = "true" ] && [ "$ARG" != "--reconfigure" ]; then
+    echo "Уже настроено:"
+    echo "  мозг:  $BRAIN_PATH (operator/projects/default_project)"
+    echo "  карта: $INFRA_CONFIG_PATH (servers/monitoring/backups)"
     echo "Для перенастройки запусти /sysadmin-init --reconfigure"
     exit 0
+fi
+
+# 4) Найден legacy и нового мозга нет → предлагаю МИГРАЦИЮ (см. Шаг 0.2).
+#    Флаг MIGRATE=true сигналит дальнейшим шагам идти веткой миграции, а не интервью.
+MIGRATE=false
+if [ "$BRAIN_EXISTS" != "true" ] && [ -n "$LEGACY_PATH" ]; then
+    MIGRATE=true
+    echo "Обнаружен старый конфиг (всё-в-одном): $LEGACY_PATH"
+    echo "Предложу расщепить его на два новых файла (agent-config + infra-config)."
 fi
 
 # jq уже гарантирован гейтом Шага 0.0. check-jsonschema — опционален.
@@ -174,54 +234,140 @@ bash "$SYSADMIN_ROOT/.claude/skills/sysadmin-init/scripts/detect-defaults.sh" > 
 ```
 
 **Все дальнейшие временные файлы скилла — внутри `$WORKDIR`** (не `/tmp/`):
-draft-конфиг `$WORKDIR/sysadmin-config-draft.json`, промежуточные `$WORKDIR/x`.
-Это и есть портируемость на Windows-Git-Bash.
+draft-конфиги `$WORKDIR/agent-config-draft.json` и `$WORKDIR/infra-config-draft.json`,
+промежуточные `$WORKDIR/x`. Это и есть портируемость на Windows-Git-Bash.
 
-**Если CONFIG_PATH пуст (первичный setup):**
-- В Раунде 1.5 (путь к infra/) — спрашиваю оператора куда положить будущий `infra/`.
-- На Шаге 10 (запись) — `CONFIG_PATH = "$INFRA_PATH/sysadmin-config.json"`, где `$INFRA_PATH` — ответ оператора из Раунда 1.5 с раскрытым tilde.
-- Если папка `$INFRA_PATH` не существует — сначала `mkdir -p "$INFRA_PATH"` (это безопасно, мы только создаём пустую папку под конфиг и будущий inventory).
+**Если мозга нет (первичный setup):**
+- В Раунде 1.5 (проект + путь к infra/) — спрашиваю id/title проекта и куда положить будущий `infra/`.
+- На Шаге 10 (запись): `agent-config.json` → `$SYSADMIN_ROOT/agent-config.json`;
+  `infra-config.json` → `$INFRA_PATH/infra-config.json`, где `$INFRA_PATH` — `infra_root`
+  из Раунда 1.5 с раскрытым tilde.
+- Если папка `$INFRA_PATH` не существует — сначала `mkdir -p "$INFRA_PATH"` (это безопасно,
+  мы только создаём пустую папку под конфиг и будущий inventory).
+
+### Шаг 0.2: Ветка миграции legacy (если `MIGRATE=true`)
+
+Если на Шаге 0.1 найден старый `sysadmin-config.json` (всё-в-одном) и нового мозга ещё нет —
+предлагаю расщепить. Через `AskUserQuestion` (radio): «Мигрировать сейчас» / «Не сейчас (выйти)».
+
+**Правило раскладки полей при миграции:**
+
+| Поле в старом `sysadmin-config.json` | Куда уезжает |
+|---|---|
+| `operator.name`, `operator.timezone` | `agent-config.operator` |
+| `language` | `agent-config.operator.language` |
+| `secrets.*` | `agent-config.secrets` |
+| `meta.*` (онбоардинг) | `agent-config.meta` |
+| `infrastructure.root_path` | `agent-config.projects[0].infra_root` |
+| `monitoring`, `backups`, `notifications`, `servers`, `vpn`, `map` | `infra-config.*` |
+
+```bash
+# Расщепление legacy → два draft'а. $LEGACY_PATH из Шага 0.1.
+AGENT_DRAFT="$WORKDIR/agent-config-draft.json"
+INFRA_DRAFT="$WORKDIR/infra-config-draft.json"
+
+# Раскрываем infra_root: из legacy берём infrastructure.root_path (резолвим от каталога legacy).
+RAW_ROOT="$(jq -r '.infrastructure.root_path // empty' "$LEGACY_PATH")"
+[ -z "$RAW_ROOT" ] && RAW_ROOT="$(cd "$(dirname "$LEGACY_PATH")" && pwd)"  # сам каталог legacy
+INFRA_PATH="$(resolve_infra_path "$RAW_ROOT" "$LEGACY_PATH")" || INFRA_PATH="${RAW_ROOT/#\~/$HOME}"
+
+# id проекта генерируем из alias первого сервера (или "main-server").
+PROJ_ID="$(jq -r '(.servers[0].alias // "main-server")
+  | ascii_downcase | gsub("[^a-z0-9-]";"-") | gsub("^-+|-+$";"")' "$LEGACY_PATH")"
+[ -z "$PROJ_ID" ] && PROJ_ID="main-server"
+PROJ_TITLE="$(jq -r '.servers[0].domain // "Основной проект"' "$LEGACY_PATH")"
+
+# agent-config draft: operator + language + secrets + meta + projects[] + default_project.
+jq --arg id "$PROJ_ID" --arg title "$PROJ_TITLE" --arg root "$INFRA_PATH" '
+  {
+    "$schema": "./agent-config.schema.json",
+    version: "1.0",
+    operator: {
+      name: (.operator.name // "Оператор"),
+      language: (.language // "ru"),
+      timezone: (.operator.timezone // "UTC")
+    },
+    secrets: (.secrets // {manager:"keychain"}),
+    projects: [ { id: $id, title: $title, infra_root: $root } ],
+    default_project: $id,
+    interaction: {},
+    meta: (.meta // {onboarding_completed:false, onboarding_completed_at:null})
+  }' "$LEGACY_PATH" > "$AGENT_DRAFT"
+
+# infra-config draft: всё инфра-центричное, БЕЗ агент-полей и БЕЗ infrastructure.
+jq '
+  {
+    "$schema": "./infra-config.schema.json",
+    version: "1.0"
+  }
+  + (if .map then {map: .map} else {} end)
+  + { monitoring: (.monitoring // {enabled:false}) }
+  + { backups: (.backups // {enabled:false}) }
+  + { notifications: (.notifications // {telegram:{enabled:false}}) }
+  + { servers: (.servers // []) }
+  + (if .vpn then {vpn: .vpn} else {} end)
+' "$LEGACY_PATH" > "$INFRA_DRAFT"
+```
+
+После сборки draft'ов миграция идёт сразу на **Шаг 9 (валидация обоих)** → **Шаг 10
+(превью + запись обоих)**, минуя интервью. На Шаге 10 старый `sysadmin-config.json`
+переименовывается в `sysadmin-config.json.bak.YYYYMMDD-HHMMSS` (см. Шаг 10).
 
 ## Шаг 1: Приветствие (3-4 строки, дружелюбно)
 
 > «Привет! Я помогу настроить агента под твой проект. Соберу базовый паспорт оператора:
 > язык общения, менеджер паролей, какой у тебя сервер, что включено из мониторинга и
-> бэкапов, куда слать алерты. Итог — файл `sysadmin-config.json` в твоей приватной папке
-> `infra/`. Это займёт 3-5 минут. Если по какому-то вопросу не уверен — пиши «давай как
-> ты советуешь», я подставлю разумные значения.»
+> бэкапов, куда слать алерты. Итог — ДВА файла: `agent-config.json` (мой мозг — кто ты,
+> язык, твои проекты) в папке `sysadmin/`, и `infra-config.json` (карта сервера —
+> мониторинг, бэкапы, домены) в твоей приватной папке инфры. Это займёт 3-5 минут. Если
+> по какому-то вопросу не уверен — пиши «давай как ты советуешь», я подставлю разумные
+> значения.»
 
 ## Шаг 2: Раунд 1 — Имя, язык, таймзона (простые вопросы, без обёртки)
 
-Использую `AskUserQuestion` для типизированных вопросов:
+Использую `AskUserQuestion` для типизированных вопросов (все три → блок
+`operator` в `agent-config.json`):
 - `operator.name` (text, default — `$USER` из `$WORKDIR/sysadmin-defaults.json`).
-- `language` (radio: `ru` / `en`, default `ru`).
+- `operator.language` (radio: `ru` / `en`, default `ru`).
 - `operator.timezone` (text, default — системный из `date +%Z` или `Europe/Moscow`).
 
 Эти три вопроса — без сеньор-обёртки, потому что оператор и так знает свои имя и язык.
 
-## Шаг 2.5: Раунд 1.5 — Путь к папке инфры (СЕНЬОР-ОБЁРТКА)
+## Шаг 2.5: Раунд 1.5 — Проект и путь к папке инфры (СЕНЬОР-ОБЁРТКА)
 
 **Когда задавать:** сразу после Раунда 1, **до** Раунда 2. Без этого
 ответа последующие раунды зависают: сервер/мониторинг/бэкапы пишутся
-в конфиг, но агент не знает, куда писать `inventory/`, `decisions/`,
-`knowledge/`.
+в `infra-config.json`, но агент не знает, в какую папку его положить и куда писать
+`inventory/`, `decisions/`, `knowledge/`.
 
-**Поле:** `infrastructure.root_path` (обязательное по schema).
-**Дефолт:** `../infra` (папка-сосед относительно `sysadmin/`).
+**Что заполняем** (реестр проектов `projects[]` в `agent-config.json` + `default_project`):
+- `projects[0].id` — короткий машинный идентификатор (kebab-case, regex `^[a-z0-9][a-z0-9-]*$`).
+  Если оператор не предлагает — генерирую из имени сервера/проекта (напр. `main-server`).
+- `projects[0].title` — человекочитаемое название (опционально, для удобства).
+- `projects[0].infra_root` — путь к папке инфры этого проекта (раньше это было
+  `infrastructure.root_path`). **Рекомендуется абсолютный путь** — реестр в мозге не
+  привязан к cwd. Tilde раскрывается.
+- `default_project` = `projects[0].id` (в v1.0 один проект).
+
+**Дефолт `infra_root`:** `../infra` (папка-сосед относительно `sysadmin/`) — если оператор
+работает в родительской папке, где рядом лежат `sysadmin/` и `infra/`. Лучше — абсолютный
+путь к этой папке.
 
 **Краткая обёртка** (полная сеньор-обёртка из 6 шагов с мини-уроком,
 таблицами, валидацией ответа и обработкой опечаток — `references/wizard-flow.md` §«Раунд 1.5»):
 
-> «`sysadmin/` — публичный мозг агента. Твоя `infra/` (карта серверов,
-> ADR, инциденты) — приватная и отдельная. Связь — через
-> `infrastructure.root_path` в конфиге. Если только склонировал — пиши
-> `../infra` или «как советуешь». Если уже есть готовая папка — указывай
-> реальный путь.»
+> «`sysadmin/` — публичный мозг агента, тут лежит `agent-config.json`. Твоя инфра (карта
+> серверов, ADR, инциденты) — приватная и отдельная папка, в ней лежит `infra-config.json`.
+> Мозг знает про твои проекты через реестр `projects[]` — каждый проект указывает на свою
+> папку. Дай проекту короткое имя (напр. `main-server`) и скажи, где папка инфры. Если
+> только склонировал — пиши `../infra` или «как советуешь». Если уже есть готовая папка —
+> указывай реальный путь.»
 
-Записываю **как ввёл оператор** (с tilde, относительный — Cold Start
-персоны при чтении сам раскрывает). Если родитель пути существует, но
-самой папки нет — нормально (агент создаст при первой работе). Если
-родителя нет — повторяю вопрос (опечатка).
+`infra_root` записываю **как ввёл оператор** (с tilde — резолвер сам раскроет; абсолютный
+путь предпочтительнее). Если родитель пути существует, но самой папки нет — нормально
+(создам на Шаге 10). Если родителя нет — повторяю вопрос (опечатка). `id` валидирую по
+regex; если ответ оператора не подходит — нормализую (`ascii_downcase`, замена не-`[a-z0-9-]`
+на `-`) и показываю, что записал.
 
 ## Шаг 3: Раунд 2 — Менеджер паролей (СЕНЬОР-ОБЁРТКА)
 
@@ -393,71 +539,124 @@ hostname (regex `^[a-z0-9.-]+$`).
 поставь VPN-панель на свой сервер`, агент запустит `/setup-vpn-panel` и сам
 заполнит поля.»
 
-## Шаг 8: Сборка JSON во временный файл
+## Шаг 8: Сборка ДВУХ JSON во временные файлы
 
-Стартовая точка — `templates/config-skeleton.json` (минимальный JSON-skeleton с
-плейсхолдерами `__FILL__`). Копирую в `$WORKDIR/sysadmin-config-draft.json`, через `jq`
-подменяю `__FILL__` на реальные значения и доливаю опциональные блоки
-(`monitoring.stack`, `monitoring.panel_domain`, `backups.destination`,
-`backups.rclone_remote`, `backups.retention`, `notifications.telegram.*`) только если
-оператор включил соответствующую подсистему.
+Собираю **два** draft'а из двух skeleton'ов:
+- `$WORKDIR/agent-config-draft.json` ← `templates/agent-config-skeleton.json` (мозг).
+- `$WORKDIR/infra-config-draft.json` ← `templates/infra-config-skeleton.json` (карта).
+
+В каждом подменяю `__FILL__` через `jq` на реальные значения и доливаю опциональные
+блоки только если оператор включил соответствующую подсистему.
+
+**Раскладка ответов по двум файлам:**
+
+| Ответ оператора | Файл | Поле |
+|---|---|---|
+| имя / язык / таймзона (Раунд 1) | agent | `operator.name` / `operator.language` / `operator.timezone` |
+| менеджер паролей (Раунд 2) | agent | `secrets.*` |
+| проект: id/title/infra_root (Раунд 1.5) | agent | `projects[0].*` + `default_project` |
+| сервер (Раунд 3) | infra | `servers[0].*` |
+| мониторинг (Раунд 4) | infra | `monitoring.*` |
+| бэкапы (Раунд 5) | infra | `backups.*` |
+| Telegram (Раунд 6) | infra | `notifications.telegram.*` |
+| VPN (Раунд 6.5) | infra | `vpn.*` |
+
+### 8.1 Сборка мозга (`agent-config-draft.json`)
 
 **Блок `secrets`:** всегда пишу `secrets.manager`. Для известных менеджеров добавляю
 `secrets.cli_available = true`. Для `manager=other` — обязательно `secrets.manager_name`
 (имя из ответа) и `secrets.cli_available` (результат ресёрча CLI из Раунда 2).
 
+**Блок `projects` + `default_project`:** один проект из Раунда 1.5.
+
 ```bash
-DRAFT="$WORKDIR/sysadmin-config-draft.json"
-cp "$SYSADMIN_ROOT/.claude/skills/sysadmin-init/templates/config-skeleton.json" "$DRAFT"
-# далее серия jq-команд по ответам оператора
-jq --arg n "$NAME" '.operator.name = $n' "$DRAFT" > "$WORKDIR/x" && mv "$WORKDIR/x" "$DRAFT"
-# Менеджер паролей. Для известных менеджеров CLI есть всегда → cli_available=true.
+AGENT_DRAFT="$WORKDIR/agent-config-draft.json"
+cp "$SYSADMIN_ROOT/.claude/skills/sysadmin-init/templates/agent-config-skeleton.json" "$AGENT_DRAFT"
+
+# operator
+jq --arg n "$NAME" --arg l "$LANG" --arg tz "$TIMEZONE" \
+   '.operator.name=$n | .operator.language=$l | .operator.timezone=$tz' \
+   "$AGENT_DRAFT" > "$WORKDIR/x" && mv "$WORKDIR/x" "$AGENT_DRAFT"
+
+# secrets. Для известных менеджеров CLI есть всегда → cli_available=true.
 # Для other — значение из ресёрча Раунда 2 (true если нашёл CLI, иначе false).
 case "$MANAGER" in
     keychain|bitwarden|1password|pass|keepassxc) CLI_AVAILABLE=true ;;
     other) : ;;  # CLI_AVAILABLE уже задан в Раунде 2 по результату ресёрча
 esac
 jq --arg m "$MANAGER" --argjson cli "$CLI_AVAILABLE" \
-   '.secrets.manager = $m | .secrets.cli_available = $cli' "$DRAFT" > "$WORKDIR/x" && mv "$WORKDIR/x" "$DRAFT"
-[ "$MANAGER" = "other" ] && { jq --arg mn "$MANAGER_NAME" '.secrets.manager_name = $mn' "$DRAFT" > "$WORKDIR/x" && mv "$WORKDIR/x" "$DRAFT"; }
-# ... и т.д.
+   '.secrets.manager=$m | .secrets.cli_available=$cli' "$AGENT_DRAFT" > "$WORKDIR/x" && mv "$WORKDIR/x" "$AGENT_DRAFT"
+[ "$MANAGER" = "other" ] && { jq --arg mn "$MANAGER_NAME" '.secrets.manager_name=$mn' "$AGENT_DRAFT" > "$WORKDIR/x" && mv "$WORKDIR/x" "$AGENT_DRAFT"; }
+
+# projects[0] из Раунда 1.5 + default_project. $PROJ_TITLE опционален.
+jq --arg id "$PROJ_ID" --arg title "$PROJ_TITLE" --arg root "$PROJ_INFRA_ROOT" '
+    .projects[0].id=$id
+  | (if $title=="" then .projects[0]|=del(.title) else .projects[0].title=$title end)
+  | .projects[0].infra_root=$root
+  | .default_project=$id' "$AGENT_DRAFT" > "$WORKDIR/x" && mv "$WORKDIR/x" "$AGENT_DRAFT"
 ```
 
-**Важно: блок `meta`.** Если в skeleton'е нет `meta` — добавляю его со значениями
-по умолчанию (`onboarding_completed: false`, `onboarding_completed_at: null`). Финальное
-значение флага установит вопрос про знакомство в Шаге 10 (см. ниже). На первичный
-setup значение всегда стартует как `false`, потому что новый пользователь по
-определению не проходил знакомство.
-
-```bash
-jq '. + {meta: {onboarding_completed: false, onboarding_completed_at: null}}' \
-    "$DRAFT" > "$WORKDIR/x" && mv "$WORKDIR/x" "$DRAFT"
-```
-
+**Блок `meta` (мозг).** Skeleton мозга уже содержит `meta` со значениями по умолчанию
+(`onboarding_completed: false`, `onboarding_completed_at: null`). Финальное значение
+установит вопрос про знакомство в Шаге 10. На первичном setup стартует как `false`.
 В режиме `--reconfigure` блок `meta` **не трогается** — сохраняется текущее состояние
-из существующего конфига. Если оператор однажды поставил `true` — оно так и останется.
+из существующего `agent-config.json`. Если оператор однажды поставил `true` — оно так и
+останется.
 
-**Важно: блок `infrastructure`.** Поле `infrastructure.root_path` уже записано в Раунде 1.5 (Шаг 2.5 выше) — на этом шаге ничего дополнительно делать не нужно. Просто проверяю, что блок `infrastructure` присутствует в `$DRAFT` (`jq -e '.infrastructure.root_path'`); если его нет — это ошибка в потоке интервью, повторяю Раунд 1.5.
-
-## Шаг 9: Валидация перед сохранением
+### 8.2 Сборка карты (`infra-config-draft.json`)
 
 ```bash
-bash "$SYSADMIN_ROOT/.claude/skills/sysadmin-init/scripts/validate-config.sh" "$DRAFT" || {
-    echo "Конфиг не прошёл валидацию. Поле X имеет значение Y, ожидалось Z."
+INFRA_DRAFT="$WORKDIR/infra-config-draft.json"
+cp "$SYSADMIN_ROOT/.claude/skills/sysadmin-init/templates/infra-config-skeleton.json" "$INFRA_DRAFT"
+
+# servers[0] из Раунда 3 (минимум alias/ssh_alias/role; domain опционально).
+jq --arg a "$SRV_ALIAS" --arg s "$SRV_SSH" --arg r "$SRV_ROLE" \
+   '.servers = [{alias:$a, ssh_alias:$s, role:$r}]' "$INFRA_DRAFT" > "$WORKDIR/x" && mv "$WORKDIR/x" "$INFRA_DRAFT"
+[ -n "$SRV_DOMAIN" ] && { jq --arg d "$SRV_DOMAIN" '.servers[0].domain=$d' "$INFRA_DRAFT" > "$WORKDIR/x" && mv "$WORKDIR/x" "$INFRA_DRAFT"; }
+
+# monitoring / backups / notifications / vpn — доливаю опциональные поля
+# только при enabled=true (см. Раунды 4-6.5). Пример для мониторинга:
+if [ "$MON_ENABLED" = "true" ]; then
+    jq --argjson stack "$MON_STACK_JSON" --arg pd "$MON_PANEL_DOMAIN" \
+       '.monitoring={enabled:true, stack:$stack, panel_domain:$pd}' \
+       "$INFRA_DRAFT" > "$WORKDIR/x" && mv "$WORKDIR/x" "$INFRA_DRAFT"
+fi
+# ... аналогично backups (destination/retention/rclone_remote),
+#     notifications.telegram (bot_username/chat_type), vpn (блок целиком).
+```
+
+**Важно:** `infra-config.json` НЕ содержит ни `operator`, ни `language`, ни `secrets`,
+ни `infrastructure.root_path` — всё это уехало в мозг (ADR-0013). Если по ошибке потока
+интервью в `$INFRA_DRAFT` оказались агент-поля — это баг сборки; убираю их (`jq 'del(...)'`)
+до валидации, иначе схема `infra-config` (additionalProperties:false) отвергнет файл.
+
+## Шаг 9: Валидация перед сохранением (ОБА файла)
+
+`validate-config.sh` определяет схему по имени файла: `*agent-config*` → agent-схема,
+`*infra-config*` → infra-схема. Валидирую оба draft'а.
+
+```bash
+VALIDATOR="$SYSADMIN_ROOT/.claude/skills/sysadmin-init/scripts/validate-config.sh"
+# Можно одним вызовом с двумя путями (скрипт сам разведёт по схемам):
+bash "$VALIDATOR" "$AGENT_DRAFT" "$INFRA_DRAFT" || {
+    echo "Конфиг не прошёл валидацию (см. вывод выше: какой файл, какое поле)."
     echo "Что делаем — исправить вручную или вернуться в нужный раунд?"
     exit 2
 }
 ```
 
-Если ошибка — STOP. Показываю оператору конкретное поле и причину (вывод
-`check-jsonschema` уже содержит указатель типа `.servers[0].ssh_alias must be string`).
+Если ошибка — STOP. Показываю оператору конкретный файл, поле и причину (вывод
+`check-jsonschema` содержит указатель типа `.servers[0].ssh_alias must be string`, а
+jq-fallback печатает `FAIL [agent]` / `FAIL [infra]` с пометкой какого файла касается).
 Спрашиваю: «исправить вручную или вернуться в раунд X?»
 
-## Шаг 10: Превью + подтверждение
+## Шаг 10: Превью + подтверждение (ОБА файла)
 
 ```bash
-echo "Итоговый конфиг:"
-jq '.' "$DRAFT"
+echo "Мозг (agent-config.json → $SYSADMIN_ROOT/):"
+jq '.' "$AGENT_DRAFT"
+echo "Карта (infra-config.json → папка проекта):"
+jq '.' "$INFRA_DRAFT"
 ```
 
 Спрашиваю «всё верно?» через `AskUserQuestion` (radio: «Да, сохранить» / «Вернуться в
@@ -465,29 +664,41 @@ jq '.' "$DRAFT"
 
 Если «Да»:
 ```bash
-# При первичном setup: CONFIG_PATH вычисляется из ответа Раунда 1.5
-# (infrastructure.root_path) — пишем туда.
-if [ -z "$CONFIG_PATH" ]; then
-    INFRA_PATH=$(jq -r '.infrastructure.root_path' "$DRAFT")
-    # Раскрываю tilde без eval (безопасно в bash/zsh)
-    INFRA_PATH="${INFRA_PATH/#\~/$HOME}"
-    # Создаю ПАПКУ инфры если её нет (именно директорию — не файл!)
-    mkdir -p "$INFRA_PATH" || {
-        echo "ERROR: не удалось создать папку инфры: $INFRA_PATH"
-        echo "Проверь путь (опечатка? нет прав?) и повтори Раунд 1.5."
-        exit 1
-    }
-    [ -d "$INFRA_PATH" ] || { echo "ERROR: $INFRA_PATH — не директория"; exit 1; }
-    CONFIG_PATH="$INFRA_PATH/sysadmin-config.json"
+# 1) ЦЕЛЕВОЙ ПУТЬ МОЗГА — всегда корень sysadmin/.
+AGENT_PATH="$SYSADMIN_ROOT/agent-config.json"
+
+# 2) ЦЕЛЕВОЙ ПУТЬ КАРТЫ — папка проекта (infra_root из мозга-draft).
+INFRA_ROOT_RAW=$(jq -r '.projects[0].infra_root' "$AGENT_DRAFT")
+INFRA_ROOT="${INFRA_ROOT_RAW/#\~/$HOME}"   # tilde без eval
+# Создаю ПАПКУ инфры если её нет (именно директорию — не файл!)
+mkdir -p "$INFRA_ROOT" || {
+    echo "ERROR: не удалось создать папку инфры: $INFRA_ROOT"
+    echo "Проверь путь (опечатка? нет прав?) и повтори Раунд 1.5."
+    exit 1
+}
+[ -d "$INFRA_ROOT" ] || { echo "ERROR: $INFRA_ROOT — не директория"; exit 1; }
+INFRA_CONFIG_PATH="$INFRA_ROOT/infra-config.json"
+
+# Нормализую infra_root в мозге до абсолютного пути (реестр не привязан к cwd).
+ABS_ROOT="$(cd "$INFRA_ROOT" && pwd)"
+jq --arg r "$ABS_ROOT" '.projects[0].infra_root=$r' "$AGENT_DRAFT" > "$WORKDIR/x" && mv "$WORKDIR/x" "$AGENT_DRAFT"
+
+# 3) Backup существующих версий, если есть (для --reconfigure и миграции).
+TS="$(date +%Y%m%d-%H%M%S)"
+[ -f "$AGENT_PATH" ]        && cp "$AGENT_PATH"        "$AGENT_PATH.bak.$TS"
+[ -f "$INFRA_CONFIG_PATH" ] && cp "$INFRA_CONFIG_PATH" "$INFRA_CONFIG_PATH.bak.$TS"
+# Миграция: старый всё-в-одном переименовываем в .bak (не удаляем — путь к откату).
+if [ "${MIGRATE:-false}" = "true" ] && [ -n "${LEGACY_PATH:-}" ] && [ -f "$LEGACY_PATH" ]; then
+    mv "$LEGACY_PATH" "$LEGACY_PATH.bak.$TS"
+    echo "→ Старый конфиг сохранён как $LEGACY_PATH.bak.$TS (можно удалить позже)."
 fi
 
-# Backup существующего, если есть (для --reconfigure)
-[ -f "$CONFIG_PATH" ] && \
-    cp "$CONFIG_PATH" "$CONFIG_PATH.bak.$(date +%Y%m%d-%H%M%S)"
-mv "$DRAFT" "$CONFIG_PATH"
+# 4) Запись обоих файлов.
+mv "$AGENT_DRAFT" "$AGENT_PATH"
+mv "$INFRA_DRAFT" "$INFRA_CONFIG_PATH"
 ```
 
-### Шаг 10.5: FINAL CHECK — конфиг РЕАЛЬНО на диске и валиден
+### Шаг 10.5: FINAL CHECK — ОБА конфига РЕАЛЬНО на диске и валидны
 
 **Зачем:** без этой проверки скилл может напечатать «Готово», когда запись на самом деле
 провалилась (нет прав, битый путь, упал `mv`) — и оператор остаётся без конфига, думая что
@@ -495,16 +706,21 @@ mv "$DRAFT" "$CONFIG_PATH"
 **NEVER печатать «Готово» без прохождения этого блока.**
 
 ```bash
-# 1. Файл физически существует по целевому пути
-[ -f "$CONFIG_PATH" ] || {
-    echo "ОШИБКА: конфиг НЕ записан — файла нет по пути $CONFIG_PATH."
-    echo "Это сбой записи (права? путь? диск?). НЕ создаю суррогат вручную (C.9)."
-    echo "Покажи мне вывод: ls -la \"$(dirname "$CONFIG_PATH")\" — разберёмся."
-    exit 1
-}
-# 2. Это валидный JSON и проходит схему
-bash "$SYSADMIN_ROOT/.claude/skills/sysadmin-init/scripts/validate-config.sh" "$CONFIG_PATH" || {
-    echo "ОШИБКА: файл записан, но не проходит валидацию. Путь: $CONFIG_PATH"
+VALIDATOR="$SYSADMIN_ROOT/.claude/skills/sysadmin-init/scripts/validate-config.sh"
+
+# 1. Оба файла физически существуют по целевым путям
+for f in "$AGENT_PATH" "$INFRA_CONFIG_PATH"; do
+    [ -f "$f" ] || {
+        echo "ОШИБКА: конфиг НЕ записан — файла нет по пути $f."
+        echo "Это сбой записи (права? путь? диск?). НЕ создаю суррогат вручную (C.9)."
+        echo "Покажи мне вывод: ls -la \"$(dirname "$f")\" — разберёмся."
+        exit 1
+    }
+done
+# 2. Оба валидны по своим схемам (validate-config.sh сам разведёт по имени файла)
+bash "$VALIDATOR" "$AGENT_PATH" "$INFRA_CONFIG_PATH" || {
+    echo "ОШИБКА: файл(ы) записан(ы), но не проходит(ят) валидацию."
+    echo "Пути: $AGENT_PATH , $INFRA_CONFIG_PATH"
     exit 1
 }
 # 3. Чистим временный каталог — только теперь, когда запись подтверждена
@@ -513,12 +729,12 @@ rm -rf "$WORKDIR"
 
 ### Шаг 10.6: Самопроверка «всё реально работает» + честный вердикт
 
-**Зачем (принцип «не смог — скажи прямо»):** мало записать конфиг — нужно убедиться,
-что вся связка пригодна к работе (bash+jq, конфиг валиден, папка `infra/` есть, bridge-файл
-на месте). Прогоняю `self-test-setup.sh`. Он печатает либо «✅ проверено», либо понятный
-новичку вердикт «настройка не завершена, свяжись с разработчиком агента» и возвращает 1.
-**«Готово» говорю ТОЛЬКО при rc=0.** Если rc=1 — не притворяюсь, что всё хорошо: передаю
-оператору ровно тот вердикт, что напечатал скрипт.
+**Зачем (принцип «не смог — скажи прямо»):** мало записать конфиги — нужно убедиться,
+что вся связка пригодна к работе (bash+jq, оба конфига валидны, папка инфры есть,
+bridge-файл на месте). Прогоняю `self-test-setup.sh`. Он печатает либо «✅ проверено»,
+либо понятный новичку вердикт «настройка не завершена, свяжись с разработчиком агента» и
+возвращает 1. **«Готово» говорю ТОЛЬКО при rc=0.** Если rc=1 — не притворяюсь, что всё
+хорошо: передаю оператору ровно тот вердикт, что напечатал скрипт.
 
 ```bash
 # Мини-bootstrap на случай, если этот блок — отдельный процесс и $LIB потерялся.
@@ -530,9 +746,13 @@ fi
 [ -z "${SYSADMIN_ROOT:-}" ] && SYSADMIN_ROOT="$(cd "$LIB/../../.." && pwd)"
 
 source "$LIB/self-test-setup.sh"
-if self_test_setup "$CONFIG_PATH" "$SYSADMIN_ROOT"; then
+# Передаю ОБА файла: мозг ($1) и карту активного проекта ($3). Папку инфры self-test
+# берёт из projects[].infra_root мозга (ADR-0013).
+if self_test_setup "$AGENT_PATH" "$SYSADMIN_ROOT" "$INFRA_CONFIG_PATH"; then
     echo ""
-    echo "Готово. Конфиг записан и полностью проверен: $CONFIG_PATH"
+    echo "Готово. Оба конфига записаны и полностью проверены:"
+    echo "  мозг:  $AGENT_PATH"
+    echo "  карта: $INFRA_CONFIG_PATH"
 
     # --- Активация версионируемого pre-commit hook репо sysadmin ----------
     # Хук .githooks/pre-commit блокирует коммит при рассинхроне персоны
@@ -556,7 +776,7 @@ fi
 ```
 
 Если «Вернуться» — перезапускаю нужный раунд, остальные ответы сохраняю.
-Если «Отмена» — `rm -rf "$WORKDIR"`, ничего не пишу в `infra/`.
+Если «Отмена» — `rm -rf "$WORKDIR"`, ничего не пишу ни в `sysadmin/`, ни в папку инфры.
 
 ### Onboarding-флаг — спрашиваю про знакомство
 
@@ -581,10 +801,10 @@ fi
 Действия по ответу:
 
 ```bash
-# Вариант 1: уже знаком → ставлю флаг true (использую $CONFIG_PATH из Шага 0/10)
+# Вариант 1: уже знаком → ставлю флаг true в МОЗГЕ (.meta живёт в agent-config.json).
 tmp=$(mktemp) && jq --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '.meta.onboarding_completed = true | .meta.onboarding_completed_at = $ts' \
-    "$CONFIG_PATH" > "$tmp" && mv "$tmp" "$CONFIG_PATH"
+    "$AGENT_PATH" > "$tmp" && mv "$tmp" "$AGENT_PATH"
 echo "Понял, отметил знакомство пройденным. Агент не будет напоминать."
 
 # Вариант 2: позже → флаг остаётся false (он и так false из шаблона)
@@ -605,13 +825,15 @@ exit 0
 Вывожу адаптированный список скиллов в зависимости от ответов оператора:
 
 ```
-Конфиг создан: {CONFIG_PATH}
+Создано ДВА конфига (ADR-0013):
+  • мозг агента:  {AGENT_PATH}            (в sysadmin/ — кто ты, язык, реестр проектов)
+  • карта инфры:  {INFRA_CONFIG_PATH}     (в папке проекта — серверы, мониторинг, бэкапы)
 
 Где работать дальше: открывай Claude Code в РОДИТЕЛЬСКОЙ папке — той, где
-рядом лежат sysadmin/ (мой мозг) и infra/ (твои данные). Это самое удобное
-место: оба репо видны сразу, и я найду конфиг автоматически. Но технически
-вызывать @sysadmin можно из любой папки — я подхвачу конфиг по алгоритму
-Cold Start (см. references/cold-start.md).
+рядом лежат sysadmin/ (мой мозг) и папка инфры (твои данные). Это самое удобное
+место: оба репо видны сразу. Я найду мозг сразу (он в sysadmin/), а карту — через
+реестр projects[] в мозге, без перебора. Технически вызывать @sysadmin можно из
+любой папки — я подхвачу конфиги по алгоритму Cold Start (см. references/cold-start.md).
 
 Что дальше — пошагово:
 
@@ -634,20 +856,36 @@ Cold Start (см. references/cold-start.md).
 
 # Режим --reconfigure
 
-Псевдокод одного раунда (использую `$CONFIG_PATH` из Шага 0 — он гарантированно непустой для `--reconfigure`):
+В `--reconfigure` текущие значения читаю из ДВУХ файлов: агент-поля из `$BRAIN_PATH`
+(`agent-config.json`), инфра-поля из `$INFRA_CONFIG_PATH` (`infra-config.json`). Оба пути
+гарантированно непустые после Шага 0.1 (find_brain_config + resolve_active_project).
+
+Псевдокод одного раунда (пример — менеджер паролей, агент-поле):
 
 ```bash
-current_value=$(jq -r '.secrets.manager' "$CONFIG_PATH")
+current_value=$(jq -r '.secrets.manager' "$BRAIN_PATH")
 echo "Сейчас: secrets.manager = $current_value"
 # AskUserQuestion: "Оставить как есть? [y=да / n=задать вопросы заново]"
 # если "n": запустить тот же раунд, что в первичном setup
 # если "y" или Enter: оставить current_value
 ```
 
-Прохожу по всем 6 раундам. После последнего — Шаги 8 (сборка), 9 (валидация),
-10 (превью + backup существующего + mv), 10.5 (FINAL CHECK), 10.6 (самопроверка +
-честный вердикт), 11 (финал). Самопроверка обязательна и в `--reconfigure` — после
-правок конфиг тоже должен остаться рабочим.
+```bash
+# Пример инфра-поля (сервер) — читаю из карты:
+current_role=$(jq -r '.servers[0].role' "$INFRA_CONFIG_PATH")
+echo "Сейчас: servers[0].role = $current_role"
+```
+
+Прохожу по всем раундам. Где брать «текущее»: Раунд 1 (operator), 1.5 (projects[0]),
+2 (secrets) — из `$BRAIN_PATH`; Раунды 3-6.5 (servers/monitoring/backups/notifications/vpn)
+— из `$INFRA_CONFIG_PATH`. После последнего — Шаги 8 (сборка обоих draft'ов),
+9 (валидация обоих), 10 (превью + backup существующих + mv обоих), 10.5 (FINAL CHECK
+обоих), 10.6 (самопроверка + честный вердикт), 11 (финал). Самопроверка обязательна
+и в `--reconfigure` — после правок оба конфига тоже должны остаться рабочими.
+
+**Важно в --reconfigure:** блок `meta` мозга и уже выставленные VPN-поля
+(`panel_url`, `panel_web_base_path` — их заполняют VPN-скиллы) НЕ затираю — переношу
+текущие значения из существующих файлов в draft перед записью.
 
 # Failed Attempts (грабли, на которых я учился)
 
@@ -658,8 +896,9 @@ echo "Сейчас: secrets.manager = $current_value"
    `setup-backups` потом падает на `null` в `rclone_remote`».** Урок: ВСЕГДА
    `check-jsonschema` (или fallback на jq) ПЕРЕД `mv` в финальное место.
 3. **«--reconfigure перезаписал конфиг, оператор хочет вернуть как было».** Урок:
-   ВСЕГДА делать backup `sysadmin-config.json.bak.YYYYMMDD-HHMMSS` перед записью.
-   Хранить последние 3 backup, чистить старшие (отдельная задача).
+   ВСЕГДА делать backup `<имя>.bak.YYYYMMDD-HHMMSS` перед записью КАЖДОГО из двух
+   файлов (`agent-config.json`, `infra-config.json`). Хранить последние 3 backup,
+   чистить старшие (отдельная задача).
 4. **«Глубокая вложенность вопросов „если выбрал A, спрашиваю A.1, A.2, A.3, и для
    каждого ещё подвопрос“».** Урок: максимум 2 уровня вложенности. Третий уровень —
    отложить в `--reconfigure` или ручную правку.
@@ -678,10 +917,15 @@ echo "Сейчас: secrets.manager = $current_value"
 
 # Граничные случаи
 
+- **Найден старый `sysadmin-config.json` (всё-в-одном), нового мозга нет.** Поведение:
+  предлагаю миграцию (Шаг 0.2) — расщепляю на `agent-config.json` + `infra-config.json`,
+  старый переименовываю в `.bak`. Раскладка полей — по таблице в Шаге 0.2. Если оператор
+  отказался («Не сейчас») — выход 0, ничего не трогаю.
 - **Конфиг есть, но повреждён (валидный JSON, не валиден по схеме).** Поведение: при
-  запуске без флага → STOP с сообщением «конфиг повреждён, проблема в поле X. Запусти
-  `/sysadmin-init --reconfigure`». При `--reconfigure` → принудительно стартую с
-  defaults из текущего файла (что прочиталось) + интервью по битым полям.
+  запуске без флага → STOP с сообщением «конфиг повреждён, проблема в поле X (в каком
+  файле — agent-config или infra-config). Запусти `/sysadmin-init --reconfigure`». При
+  `--reconfigure` → принудительно стартую с defaults из текущих файлов (что прочиталось)
+  + интервью по битым полям.
 - **Оператор прервал интервью на середине (Ctrl-C).** Поведение: ничего не пишу
   в конфиг. Draft лежал в `$WORKDIR` (`mktemp -d`) — он эфемерный, при следующем
   запуске начинаю интервью заново. Это сознательный выбор: state в `mktemp` ненадёжен
@@ -701,7 +945,11 @@ echo "Сейчас: secrets.manager = $current_value"
   пустой массив `ssh_aliases: []` — пропускаю автодетект, спрашиваю алиас вручную.
 - **Оператор хочет multi-server.** Ответ: «В v1.0 поддерживается один сервер через
   интервью. Multi-server отложено в v1.x — добавишь второй сервер вручную в
-  `servers[]`, схема разрешает массив любой длины ≥ 1.»
+  `servers[]` (в `infra-config.json`), схема разрешает массив любой длины ≥ 1.»
+- **Оператор хочет несколько проектов-инфраструктур (multi-project).** Ответ: «В v1.0
+  интервью заводит один проект в `projects[]`. Дополнительные проекты добавишь вручную в
+  `agent-config.json` — допиши элемент в `projects[]` (id/title/infra_root), при желании
+  смени `default_project`. Схема разрешает массив любой длины ≥ 1.»
 - **Оператор отвечает на сеньор-вопрос „давай как ты советуешь“.** Это легитимный
   ответ — применяю рекомендацию из шага 4 обёртки и перехожу к следующему раунду.
 

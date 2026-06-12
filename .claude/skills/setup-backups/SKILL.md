@@ -56,9 +56,20 @@ STRICT/OPTIONAL скиллов — алгоритм идентичен Cold Star
 source "$SYSADMIN_ROOT/.claude/skills/_lib/find-config.sh"
 
 # STRICT: exit 1 с понятным сообщением если конфига нет
-find_sysadmin_config strict
+find_sysadmin_config strict       # $CONFIG = infra-config.json (backups/notifications)
+find_brain_config || true         # $BRAIN_CONFIG = agent-config.json (secrets.manager)
 
-# Подсистема должна быть включена
+# secrets.manager — агент-поле (ADR-0013): живёт в мозге ($BRAIN_CONFIG).
+# Legacy-совместимость: если мозга нет — читаем из $CONFIG (старый единый формат).
+get_agent_field() {  # $1=jq-путь, $2=default (путь одинаков в мозге и legacy)
+  local v=""
+  [ -n "${BRAIN_CONFIG:-}" ] && v=$(jq -r "$1 // empty" "$BRAIN_CONFIG" 2>/dev/null)
+  [ -z "$v" ] && [ -n "${CONFIG:-}" ] && [ -f "${CONFIG:-}" ] && v=$(jq -r "$1 // empty" "$CONFIG" 2>/dev/null)
+  [ -z "$v" ] && v="$2"
+  echo "$v"
+}
+
+# Подсистема должна быть включена (инфра-поле → $CONFIG)
 BAK_ENABLED=$(get_config_field backups.enabled false)
 if [ "$BAK_ENABLED" != "true" ]; then
     cat <<'EOF' >&2
@@ -81,8 +92,8 @@ RETENTION_MONTHS_FROM_CONFIG=$(get_config_field backups.retention.monthly 6)
 TG_ENABLED=$(get_config_field notifications.telegram.enabled false)
 [ "$TG_ENABLED" = "true" ] && ALERT_CHANNEL_FROM_CONFIG="telegram" || ALERT_CHANNEL_FROM_CONFIG=""
 
-# Менеджер паролей → конвенция индекса для restic-passphrase
-SECRETS_MANAGER=$(get_config_field secrets.manager keychain)
+# Менеджер паролей → конвенция индекса для restic-passphrase (агент-поле → мозг)
+SECRETS_MANAGER=$(get_agent_field '.secrets.manager' keychain)
 case "$SECRETS_MANAGER" in
     keychain)   BACKUP_PASS_REF_FROM_CONFIG="keychain://infra/restic-passphrase" ;;
     pass)       BACKUP_PASS_REF_FROM_CONFIG="pass:infra/restic-passphrase" ;;

@@ -1,0 +1,25 @@
+{
+  "$schema": "./agent-config.schema.json",
+  "version": "1.0",
+  "operator": {
+    "name": "Имя оператора",
+    "language": "ru",
+    "timezone": "UTC"
+  },
+  "secrets": {
+    "manager": "keychain"
+  },
+  "projects": [
+    {
+      "id": "main-server",
+      "title": "Основной сервер",
+      "infra_root": "~/path/to/your/infra"
+    }
+  ],
+  "default_project": "main-server",
+  "interaction": {},
+  "meta": {
+    "onboarding_completed": false,
+    "onboarding_completed_at": null
+  }
+}

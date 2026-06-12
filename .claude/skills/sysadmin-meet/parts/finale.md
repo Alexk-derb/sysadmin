@@ -1,27 +1,41 @@
 **Финальное напутствие при выборе «запустить /sysadmin-init».**
 
-Перед выводом этого текста — обнови onboarding-флаг в `sysadmin-config.json` оператора,
-если конфиг уже существует (повторное прохождение знакомства, или пользователь
-сначала запустил /sysadmin-init без знакомства, теперь возвращается). Ставишь
-`meta.onboarding_completed: true`. Это останавливает напоминания агента.
+Перед выводом этого текста — обнови onboarding-флаг в `agent-config.json` оператора
+(мозг агента), если конфиг уже существует (повторное прохождение знакомства, или
+пользователь сначала запустил /sysadmin-init без знакомства, теперь возвращается).
+Ставишь `meta.onboarding_completed: true`. Это останавливает напоминания агента.
 
-Конфиг живёт в `infra/` оператора. Алгоритм поиска — тот же, что в Cold Start Protocol
-персоны (см. `references/cold-start.md`): cwd, `../infra/`, `~/infra/`, типичные пути.
+Конфиг мозга живёт в **известном месте** — корне репо `sysadmin/` (ADR-0013), его
+не нужно искать перебором. Резолвишь корень `sysadmin/` так же, как Cold Start
+(см. `references/cold-start.md`): `agent-config.json` рядом с `CLAUDE.md` и
+`.claude/`. На совместимость со старыми установками — fallback на единый
+`sysadmin-config.json` в `infra/`, если `agent-config.json` ещё нет.
 
 ```bash
-# Поиск конфига (тот же алгоритм что в Cold Start)
+# Конфиг мозга — в корне sysadmin/ (известное место, без перебора)
 CONFIG_PATH=""
 for candidate in \
-    "./sysadmin-config.json" \
-    "../infra/sysadmin-config.json" \
-    "$HOME/infra/sysadmin-config.json" \
-    "$HOME/work/infra/sysadmin-config.json" \
-    "$HOME/projects/infra/sysadmin-config.json"; do
+    "./agent-config.json" \
+    "../sysadmin/agent-config.json" \
+    "$HOME/sysadmin/agent-config.json"; do
     if [ -f "$candidate" ]; then
         CONFIG_PATH="$candidate"
         break
     fi
 done
+
+# Fallback: старая установка с единым sysadmin-config.json (до ADR-0013)
+if [ -z "$CONFIG_PATH" ]; then
+    for candidate in \
+        "./sysadmin-config.json" \
+        "../infra/sysadmin-config.json" \
+        "$HOME/infra/sysadmin-config.json"; do
+        if [ -f "$candidate" ]; then
+            CONFIG_PATH="$candidate"
+            break
+        fi
+    done
+fi
 
 if [ -n "$CONFIG_PATH" ]; then
     if jq -e '.meta' "$CONFIG_PATH" >/dev/null 2>&1; then
@@ -30,7 +44,7 @@ if [ -n "$CONFIG_PATH" ]; then
             '.meta.onboarding_completed = true | .meta.onboarding_completed_at = $ts' \
             "$CONFIG_PATH" > "$tmp" && mv "$tmp" "$CONFIG_PATH"
     else
-        # Старый конфиг без meta — создаю блок целиком
+        # Конфиг без meta — создаю блок целиком
         tmp=$(mktemp) && jq --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '. + {meta: {onboarding_completed: true, onboarding_completed_at: $ts}}' \
             "$CONFIG_PATH" > "$tmp" && mv "$tmp" "$CONFIG_PATH"
@@ -41,7 +55,7 @@ fi
 
 Если конфига **нет** (типичный сценарий: новый пользователь, прошёл знакомство первым,
 сейчас идёт на /sysadmin-init) — флаг поставит сам скилл /sysadmin-init после
-создания конфига. Здесь ничего делать не нужно — просто выводи напутствие.
+создания конфигов. Здесь ничего делать не нужно — просто выводи напутствие.
 
 ---
 
@@ -63,7 +77,8 @@ fi
 > ```
 >
 > Скилл задаст тебе 6 вопросов про твой проект, всё объяснит по пути, и в конце
-> создаст файл `sysadmin-config.json`. Это займёт около 5 минут.
+> создаст два конфига: `agent-config.json` (мозг агента, в `sysadmin/`) и
+> `infra-config.json` (карта инфры, в папке `infra/`). Это займёт около 5 минут.
 >
 > После этого ты сможешь работать с агентом полноценно. Напиши `@sysadmin привет,
 > познакомься с моим сервером` — и он сам разберётся с чего начать.

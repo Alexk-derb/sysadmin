@@ -1,8 +1,17 @@
 # Личная конфигурация агента — НИКОГДА не коммитится в публичный репо.
-# Содержит реальные SSH-алиасы, домены, имя Telegram-бота оператора.
-sysadmin-config.json
+# Содержит имя оператора, реальные пути к проектам, менеджер паролей (ADR-0013).
+agent-config.json
+# Личная карта инфры — если оператор работает прямо в sysadmin/ (ADR-0013).
+infra-config.json
 
-# Публичные шаблоны и схема — коммитятся (negation override правила выше)
+# Публичные шаблоны и схемы — коммитятся (negation override правила выше)
+!agent-config.example.json
+!agent-config.schema.json
+!infra-config.example.json
+!infra-config.schema.json
+
+# Старые имена (до ADR-0013) — переходный период, удаляются после миграции.
+sysadmin-config.json
 !sysadmin-config.example.json
 !sysadmin-config.schema.json
 

@@ -13,7 +13,7 @@
 Агент-сисадмин для Claude Code. Архитектурно это:
 
 - **Публичный репозиторий `sysadmin/`** — мозг агента: персона, 18 скиллов, knowledge-база, ADR. Обновляется через `git pull` из этого репо. Версионирован git-тегами (`v1.0.0`, `v1.1.0`, …).
-- **Приватная папка оператора `infra/`** — его данные: карта серверов (inventory), ADR по его инфре, инциденты, knowledge про его сервер, личный `sysadmin-config.json`. **Создаётся при установке**, дальше живёт у оператора, не публикуется.
+- **Приватная папка оператора `infra/`** — его данные: карта серверов (inventory), ADR по его инфре, инциденты, knowledge про его сервер, личный `infra-config.json` (карта инфры). **Создаётся при установке**, дальше живёт у оператора, не публикуется. (Конфиг мозга `agent-config.json` живёт отдельно — в публичном репо `sysadmin/`, тоже в `.gitignore`; см. ADR-0013.)
 - **Bridge-файл `~/.claude/agents/sysadmin.md`** — маленький указатель, который говорит Claude: «есть subagent `sysadmin`, мозг живёт по такому-то пути». Благодаря этому файлу `@sysadmin` доступен из любой папки.
 
 ## Что должен сделать Claude по этой инструкции
@@ -150,7 +150,9 @@ if [ ! -d "$INFRA_PATH" ]; then
 - incidents/   — постмортемы инцидентов
 - runbooks/    — пошаговые процедуры под твою инфру
 
-`sysadmin-config.json` появится тут после `/sysadmin-init` (Шаг 8).
+`infra-config.json` (карта инфры: серверы, мониторинг, бэкапы, vpn) появится тут после
+`/sysadmin-init` (Шаг 8). Конфиг мозга `agent-config.json` (оператор, реестр проектов)
+ляжет в корень публичного репо `sysadmin/` — см. ADR-0013.
 INFRA_README
 fi
 ```
@@ -206,7 +208,7 @@ model: inherit
 
 1. Прочитай ядро персоны: \`$SYSADMIN_PATH/.claude/agents/sysadmin.md\`
 2. Дальше следуй Cold Start Protocol из персоны (\`references/cold-start.md\`):
-   - Найди \`sysadmin-config.json\` в \`infra/\` оператора по стандартному алгоритму
+   - Прочитай \`agent-config.json\` (мозг) в корне \`$SYSADMIN_PATH\` → оператор, язык, реестр проектов; возьми \`default_project\` → его \`infra_root\` и \`infra-config.json\` (карта). Если \`agent-config.json\` нет — fallback на поиск legacy \`sysadmin-config.json\` в \`infra/\` (ADR-0013)
    - Прочитай \`infra/inventory/README.md\` и \`infra/inventory/topology.md\`
    - Прочитай долговременную память: \`infra/knowledge/lessons-learned.md\`, \`operator-profile.md\`, \`working-patterns.md\`
 3. ${CLOUD_WARNING:+Предупреди оператора: $CLOUD_WARNING При работе попроси подтвердить актуальность inventory.}
@@ -229,7 +231,7 @@ echo "Создан bridge: ~/.claude/agents/sysadmin.md → $SYSADMIN_PATH"
 
 Перейди в `$SYSADMIN_PATH` (важно — без этого скилл не подхватится) и попроси оператора:
 
-> Сейчас запущу интервью /sysadmin-init — 5 минут, 6 вопросов. На выходе появится `$INFRA_PATH/sysadmin-config.json`.
+> Сейчас запущу интервью /sysadmin-init — 5 минут, 6 вопросов. На выходе появятся два конфига: `$SYSADMIN_PATH/agent-config.json` (мозг агента) и `$INFRA_PATH/infra-config.json` (карта инфры).
 >
 > Вводи команду:
 >
@@ -248,7 +250,8 @@ echo "Создан bridge: ~/.claude/agents/sysadmin.md → $SYSADMIN_PATH"
 > - **Bridge**: `~/.claude/agents/sysadmin.md` (Claude видит @sysadmin везде)
 > - **Мозг**: `$SYSADMIN_PATH` (публичный, обновляется через `git pull`)
 > - **Данные**: `$INFRA_PATH` (приватный, твой)
-> - **Конфиг**: `$INFRA_PATH/sysadmin-config.json` (заполнен по твоим ответам)
+> - **Конфиг мозга**: `$SYSADMIN_PATH/agent-config.json` (оператор, реестр проектов)
+> - **Конфиг карты**: `$INFRA_PATH/infra-config.json` (серверы, мониторинг, бэкапы — по твоим ответам)
 >
 > **Что дальше:**
 >
@@ -274,7 +277,7 @@ echo "Создан bridge: ~/.claude/agents/sysadmin.md → $SYSADMIN_PATH"
 
 Минимальная установка возможна, но **`/sysadmin-init` всё равно нужно запустить** — иначе агент не знает оператора, его язык, менеджер паролей, сервер. Если оператор настаивает:
 
-> Я могу сделать клонирование и bridge без интервью, но без `sysadmin-config.json` агент не сможет работать полноценно — он будет постоянно просить запустить `/sysadmin-init`. Точно пропустить интервью?
+> Я могу сделать клонирование и bridge без интервью, но без конфигов (`agent-config.json` + `infra-config.json`) агент не сможет работать полноценно — он будет постоянно просить запустить `/sysadmin-init`. Точно пропустить интервью?
 
 При повторном «да» — пропусти Шаги 8-9, оставь установку наполовину. Оператор сам запустит `/sysadmin-init` когда будет готов.
 

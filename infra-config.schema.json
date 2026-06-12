@@ -1,0 +1,338 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vefmvai/sysadmin/infra-config.schema.json",
+  "title": "Sysadmin Agent — Infrastructure Configuration (map / TOC)",
+  "description": "Формальный контракт конфига ИНФРАСТРУКТУРЫ (infra-config.json). Живёт в приватной папке проекта (infra/), рядом с inventory/, knowledge/, decisions/. Это карта-оглавление (Table of Contents) конкретного сервера/проекта: что включено (мониторинг, бэкапы, vpn), какие серверы, и указатели вглубь данных (блок map). Агент-центричные поля (язык, оператор, менеджер паролей) сюда НЕ входят — они в agent-config.json мозга (ADR-0013). Переименован из sysadmin-config.json. Личный infra-config.json — в .gitignore; коммитятся example + эта схема.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "monitoring", "backups", "notifications", "servers"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Ссылка на эту схему. Позволяет редакторам подсвечивать ошибки и предлагать автодополнение."
+    },
+    "version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Версия формата конфига инфры. Сейчас единственное допустимое значение — \"1.0\"."
+    },
+    "map": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "ОГЛАВЛЕНИЕ инфры (опционально, но рекомендуется): указатели вглубь данных, чтобы агент и оператор видели «одним взглядом», где что лежит. Ключ — тема (vpn, web, databases, backups...), значение — путь к подробному документу относительно корня папки инфры. Например: {\"vpn\": \"inventory/hosts/prod/vpn-3xui.md\", \"databases\": \"inventory/hosts/prod/databases.md\"}. additionalProperties=true: набор тем свободный, у каждого проекта свой.",
+      "examples": [
+        {
+          "vpn": "inventory/hosts/prod/vpn-3xui.md",
+          "web": "inventory/hosts/prod/services.md",
+          "databases": "inventory/hosts/prod/databases.md",
+          "domains": "inventory/shared/domains.md",
+          "backups": "inventory/hosts/prod/host-scripts.md"
+        }
+      ]
+    },
+    "monitoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "description": "Подсистема мониторинга. Если enabled=true — агент использует готовые UI-панели (Uptime Kuma / Beszel / Dozzle / Dockge / Diun). Если enabled=false — мониторинга нет, агент работает «вслепую» по запросу.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Включён ли стек мониторинга. true — на сервере развёрнут хотя бы один компонент. false — мониторинга нет."
+        },
+        "stack": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["uptime-kuma", "beszel", "dozzle", "dockge", "diun"]
+          },
+          "description": "Список развёрнутых компонентов. uptime-kuma — uptime + алерты. beszel — метрики хоста. dozzle — логи в браузере. dockge — управление compose-стеками. diun — отслеживание обновлений образов."
+        },
+        "panel_domain": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Поддомен с админ-панелью мониторинга (например, sysadmin.example.com). Через него оператор открывает все UI-компоненты по единому Basic Auth."
+        }
+      }
+    },
+    "backups": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "description": "Подсистема бэкапов. Если enabled=true — агент знает, куда складываются бэкапы и как проверять их свежесть. Если enabled=false — бэкапы не настроены (не для production!).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Включена ли подсистема бэкапов. true — restic + rclone настроены. false — бэкапов нет."
+        },
+        "destination": {
+          "type": "string",
+          "enum": ["yandex-disk-webdav", "nextcloud-webdav", "owncloud-webdav", "s3", "b2", "local"],
+          "description": "Куда складываются бэкапы. *-webdav — облачные хранилища через WebDAV (требуют rclone-remote). s3 — Amazon S3 или совместимое. b2 — Backblaze B2. local — локально на сервере (только для тестов!)."
+        },
+        "rclone_remote": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Имя rclone-remote'а из ~/.config/rclone/rclone.conf (для webdav-destination'ов). Например, yadisk-backup. ОБЯЗАТЕЛЬНО при destination=*-webdav."
+        },
+        "retention": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["daily", "weekly", "monthly"],
+          "description": "Сколько копий хранить (политика retention restic).",
+          "properties": {
+            "daily": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Сколько ежедневных копий хранить (типично 7)."
+            },
+            "weekly": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Сколько еженедельных копий хранить (типично 4)."
+            },
+            "monthly": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Сколько ежемесячных копий хранить (типично 6)."
+            }
+          }
+        }
+      }
+    },
+    "notifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Каналы уведомлений. Сейчас единственный канал — Telegram-бот. В будущем добавятся email/slack/discord.",
+      "properties": {
+        "telegram": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "description": "Telegram-бот для алертов от мониторинга и бэкапов.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Включён ли Telegram-канал. true — бот создан через @BotFather, его токен лежит в менеджере паролей."
+            },
+            "bot_username": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_]{4,31}$",
+              "description": "Username бота БЕЗ символа @ (например, mysysadmin_bot). Начинается с буквы, длина 5-32, латиница/цифры/подчёркивания."
+            },
+            "chat_type": {
+              "type": "string",
+              "enum": ["personal", "channel"],
+              "description": "Куда бот шлёт алерты. personal — в личный чат. channel — в публичный/приватный канал (нужен chat_id -100...)."
+            }
+          }
+        }
+      }
+    },
+    "servers": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Список серверов под управлением агента в этом проекте. Минимум 1.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["alias", "ssh_alias", "role"],
+        "properties": {
+          "alias": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Внутреннее имя сервера в inventory (например, prod, staging-eu). Используется в путях inventory/hosts/<alias>/."
+          },
+          "ssh_alias": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Имя Host из ~/.ssh/config (например, my-server, prod-vps). Через него агент выполняет ssh без указания IP/user."
+          },
+          "role": {
+            "type": "string",
+            "enum": ["production", "staging", "test", "personal"],
+            "description": "Роль сервера. production — боевой (повышенная осторожность, обязательны бэкапы). staging — предпрод. test — тестовый. personal — личный/домашний."
+          },
+          "domain": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Основной домен, обслуживаемый сервером (опционально). Например, example.com."
+          }
+        }
+      }
+    },
+    "vpn": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Подсистема VPN. Если enabled=true — на одном из серверов установлена эталонная панель 3X-UI (через /setup-vpn-panel) и/или настроен серверный прокси. Поля заполняются автоматически скиллами VPN-блока. Читается health-check / audit-security / Cold Start для контекста.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Включена ли VPN-подсистема. true — развёрнута 3X-UI. false — нет. По умолчанию false; меняется на true при первом /setup-vpn-panel."
+        },
+        "panel_url": {
+          "type": ["string", "null"],
+          "description": "Полный URL панели https://{domain}:{port} (БЕЗ webBasePath). Заполняется /setup-vpn-panel. Читается /health-check и /audit-security."
+        },
+        "panel_web_base_path": {
+          "type": ["string", "null"],
+          "description": "webBasePath панели (например, '/abc123xyz0/'). Случайный путь от сканеров. Заполняется /setup-vpn-panel. Используется /configure-vpn-routing, /setup-server-proxy, /generate-client-config."
+        },
+        "server_role": {
+          "type": ["string", "null"],
+          "enum": ["ru-server", "foreign-server", null],
+          "description": "Расположение сервера с панелью. ru-server — VPS в РФ (inbound ВСЕГДА VLESS-TCP без Reality). foreign-server — заграничный VPS (inbound VLESS+Reality обязателен). Заполняется /setup-vpn-panel. Источник правды для /configure-vpn-routing и guard'а 'Reality на РФ-сервере запрещён'. null — роль не зафиксирована."
+        },
+        "server_proxy_enabled": {
+          "type": "boolean",
+          "description": "Настроен ли серверный прокси (mixed inbound 127.0.0.1:1080 + systemd-override + /etc/environment socks5h). true — программы на сервере ходят в зарубежные API через VPN. Заполняется /setup-server-proxy."
+        },
+        "upstream_kind": {
+          "type": "string",
+          "enum": ["subscription", "self-foreign", "mixed", "none"],
+          "description": "Как организован upstream для outbound. subscription — подписка платного провайдера. self-foreign — свой заграничный VPS с VLESS+Reality. mixed — гибрид. none — outbound не настроен. Заполняется /configure-vpn-routing."
+        },
+        "default_reality_dest": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Домен-донор по умолчанию для VLESS+Reality serverName при установке своего заграничного VPS. Должен поддерживать TLS 1.3 + HTTP/2. Варианты: www.cloudflare.com (default), dl.google.com, www.microsoft.com, www.amazon.com."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "description": "Если monitoring.enabled=true → обязательны stack и panel_domain.",
+      "if": {
+        "properties": {
+          "monitoring": {
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          }
+        },
+        "required": ["monitoring"]
+      },
+      "then": {
+        "properties": {
+          "monitoring": {
+            "required": ["enabled", "stack", "panel_domain"]
+          }
+        }
+      }
+    },
+    {
+      "description": "Если backups.enabled=true → обязательны destination и retention.",
+      "if": {
+        "properties": {
+          "backups": {
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          }
+        },
+        "required": ["backups"]
+      },
+      "then": {
+        "properties": {
+          "backups": {
+            "required": ["enabled", "destination", "retention"]
+          }
+        }
+      }
+    },
+    {
+      "description": "Если backups.destination — webdav-вариант → обязателен rclone_remote.",
+      "if": {
+        "properties": {
+          "backups": {
+            "properties": {
+              "enabled": { "const": true },
+              "destination": { "enum": ["yandex-disk-webdav", "nextcloud-webdav", "owncloud-webdav"] }
+            },
+            "required": ["enabled", "destination"]
+          }
+        },
+        "required": ["backups"]
+      },
+      "then": {
+        "properties": {
+          "backups": {
+            "required": ["enabled", "destination", "retention", "rclone_remote"]
+          }
+        }
+      }
+    },
+    {
+      "description": "Если notifications.telegram.enabled=true → обязательны bot_username и chat_type.",
+      "if": {
+        "properties": {
+          "notifications": {
+            "properties": {
+              "telegram": {
+                "properties": { "enabled": { "const": true } },
+                "required": ["enabled"]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "notifications": {
+            "properties": {
+              "telegram": {
+                "required": ["enabled", "bot_username", "chat_type"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "Если vpn.enabled=true → обязательны panel_url и panel_web_base_path.",
+      "if": {
+        "properties": {
+          "vpn": {
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          }
+        },
+        "required": ["vpn"]
+      },
+      "then": {
+        "properties": {
+          "vpn": {
+            "required": ["enabled", "panel_url", "panel_web_base_path"],
+            "properties": {
+              "panel_url": { "type": "string", "minLength": 1 },
+              "panel_web_base_path": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "Если vpn.server_proxy_enabled=true → vpn.enabled=true и vpn.upstream_kind ≠ none.",
+      "if": {
+        "properties": {
+          "vpn": {
+            "properties": { "server_proxy_enabled": { "const": true } },
+            "required": ["server_proxy_enabled"]
+          }
+        },
+        "required": ["vpn"]
+      },
+      "then": {
+        "properties": {
+          "vpn": {
+            "required": ["enabled", "upstream_kind"],
+            "properties": {
+              "enabled": { "const": true },
+              "upstream_kind": { "enum": ["subscription", "self-foreign", "mixed"] }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

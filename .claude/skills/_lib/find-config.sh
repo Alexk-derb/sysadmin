@@ -154,15 +154,29 @@ locate_sysadmin_root() {
     return 1
 }
 
-# Кандидаты поиска. Порядок важен: более специфичное место — выше.
+# Кандидаты поиска (FALLBACK-перебор). Порядок важен: более специфичное место — выше.
+#
+# ВАЖНО (ADR-0013): этот перебор — РЕЗЕРВНЫЙ путь. Основной путь теперь —
+# find_brain_config() читает sysadmin/agent-config.json напрямую и берёт infra-config.json
+# из реестра projects[]. Перебор срабатывает ТОЛЬКО когда мозга нет (новый пользователь,
+# первый запуск, или старая установка до миграции).
+#
+# Для каждого места проверяем ОБА имени: новое infra-config.json (после ADR-0013) и
+# старое sysadmin-config.json (до миграции, переходная совместимость).
 _sysadmin_config_candidates() {
     # Используется через cat <<EOF чтобы поддержать раскрытие $INFRA_DIR/$HOME
     cat <<EOF
+${INFRA_DIR:-/dev/null}/infra-config.json
 ${INFRA_DIR:-/dev/null}/sysadmin-config.json
+./infra-config.json
 ./sysadmin-config.json
+../infra/infra-config.json
 ../infra/sysadmin-config.json
+$HOME/infra/infra-config.json
 $HOME/infra/sysadmin-config.json
+$HOME/work/infra/infra-config.json
 $HOME/work/infra/sysadmin-config.json
+$HOME/projects/infra/infra-config.json
 $HOME/projects/infra/sysadmin-config.json
 EOF
 }
@@ -179,8 +193,141 @@ sysadmin-config.json не найден ни в одном из стандарт�
 EOF
 }
 
-# Главная функция поиска
+# ──────────────────────────────────────────────────────────────────────────
+# find_brain_config — ОСНОВНОЙ путь поиска конфига мозга (ADR-0013).
+#
+# Находит sysadmin/agent-config.json — «дом агента». В отличие от перебора, это
+# ОДНО известное место: корень публичного репо sysadmin/ (через locate_sysadmin_root).
+# Никакого перебора по диску — поэтому быстро и без «ритуала поиска» на каждом старте.
+#
+# После успешного вызова доступны:
+#   $BRAIN_CONFIG        — путь к agent-config.json (или "" если не найден)
+#   $BRAIN_CONFIG_FOUND  — "true"/"false"
+#
+# rc=0 если найден и валиден; rc=1 если не найден или невалидный JSON.
+# Сообщения — в stderr. Не делает exit (решение о фатальности — за caller'ом).
+find_brain_config() {
+    BRAIN_CONFIG=""
+    BRAIN_CONFIG_FOUND="false"
+
+    locate_sysadmin_root || true   # заполняет $SYSADMIN_ROOT (может быть пустым)
+
+    local candidate=""
+    if [ -n "${SYSADMIN_ROOT:-}" ] && [ -f "$SYSADMIN_ROOT/agent-config.json" ]; then
+        candidate="$SYSADMIN_ROOT/agent-config.json"
+    elif [ -f "./agent-config.json" ]; then
+        # запасной случай: запущены прямо из sysadmin/, bridge недоступен
+        candidate="./agent-config.json"
+    fi
+
+    if [ -z "$candidate" ]; then
+        return 1
+    fi
+
+    if ! jq empty "$candidate" >/dev/null 2>&1; then
+        echo "ERROR: $candidate найден, но содержит невалидный JSON." >&2
+        echo "       Проверь /sysadmin-init или исправь файл вручную." >&2
+        return 1
+    fi
+
+    BRAIN_CONFIG="$candidate"
+    BRAIN_CONFIG_FOUND="true"
+    return 0
+}
+
+# ──────────────────────────────────────────────────────────────────────────
+# resolve_active_project — из мозга достать активный проект и путь к его infra-config.json.
+#
+# Аргумент 1 (опц.): id проекта. Если пусто — берётся default_project из мозга.
+# Требует, чтобы find_brain_config уже отработал ($BRAIN_CONFIG заполнен).
+#
+# После успешного вызова доступны:
+#   $ACTIVE_PROJECT_ID    — id выбранного проекта
+#   $ACTIVE_INFRA_ROOT    — абсолютный путь к папке инфры проекта (tilde раскрыт)
+#   $ACTIVE_INFRA_CONFIG  — путь к infra-config.json проекта
+#
+# rc=0 если проект найден и infra-config.json существует; rc=1 иначе (с сообщением).
+resolve_active_project() {
+    local want_id="${1:-}"
+    ACTIVE_PROJECT_ID=""
+    ACTIVE_INFRA_ROOT=""
+    ACTIVE_INFRA_CONFIG=""
+
+    if [ -z "${BRAIN_CONFIG:-}" ] || [ ! -f "${BRAIN_CONFIG:-}" ]; then
+        echo "ERROR: resolve_active_project вызван до find_brain_config (BRAIN_CONFIG пуст)." >&2
+        return 1
+    fi
+
+    # id проекта: аргумент → default_project
+    if [ -z "$want_id" ]; then
+        want_id="$(jq -r '.default_project // empty' "$BRAIN_CONFIG" 2>/dev/null)"
+    fi
+    if [ -z "$want_id" ]; then
+        echo "ERROR: в $BRAIN_CONFIG нет default_project и id не передан." >&2
+        return 1
+    fi
+
+    # достаём запись проекта по id
+    local proj
+    proj="$(jq -c --arg id "$want_id" '.projects[]? | select(.id == $id)' "$BRAIN_CONFIG" 2>/dev/null)"
+    if [ -z "$proj" ]; then
+        echo "ERROR: проект '$want_id' не найден в projects[] ($BRAIN_CONFIG)." >&2
+        return 1
+    fi
+
+    local raw_root raw_config
+    raw_root="$(printf '%s' "$proj" | jq -r '.infra_root // empty')"
+    raw_config="$(printf '%s' "$proj" | jq -r '.config // empty')"
+
+    if [ -z "$raw_root" ]; then
+        echo "ERROR: у проекта '$want_id' пустой infra_root ($BRAIN_CONFIG)." >&2
+        return 1
+    fi
+
+    # tilde → $HOME (без eval)
+    local root="${raw_root/#\~/$HOME}"
+    # нормализуем, если папка существует (схлопывает ../, относительные части)
+    local norm
+    norm="$(cd "$root" 2>/dev/null && pwd)"
+    [ -n "$norm" ] && root="$norm"
+    ACTIVE_INFRA_ROOT="$root"
+    ACTIVE_PROJECT_ID="$want_id"
+
+    # путь к infra-config.json: явный .config → иначе <infra_root>/infra-config.json
+    local cfg
+    if [ -n "$raw_config" ]; then
+        cfg="${raw_config/#\~/$HOME}"
+        case "$cfg" in
+            /*|[A-Za-z]:[\\/]*) : ;;            # абсолютный — как есть
+            *) cfg="$root/$cfg" ;;              # относительный — от infra_root
+        esac
+    else
+        cfg="$root/infra-config.json"
+    fi
+    ACTIVE_INFRA_CONFIG="$cfg"
+
+    if [ ! -f "$cfg" ]; then
+        echo "ERROR: infra-config.json проекта '$want_id' не найден: $cfg" >&2
+        return 1
+    fi
+    if ! jq empty "$cfg" >/dev/null 2>&1; then
+        echo "ERROR: $cfg найден, но содержит невалидный JSON." >&2
+        return 1
+    fi
+    return 0
+}
+
+# Главная функция поиска ИНФРА-конфига.
 # Аргумент 1: mode = strict | optional | silent (default: optional)
+#
+# Порядок (ADR-0013):
+#   1. ОСНОВНОЙ путь — мозг: find_brain_config → resolve_active_project →
+#      $CONFIG = infra-config.json активного проекта. Без перебора.
+#   2. FALLBACK — старый перебор по типичным путям (_sysadmin_config_candidates),
+#      когда мозга нет (новый пользователь / старая установка до миграции).
+#
+# Совместимость: имя функции и переменные ($CONFIG, $SYSADMIN_CONFIG_FOUND) сохранены —
+# 12 скиллов-потребителей не требуют правок. find_infra_config — псевдоним (см. ниже).
 find_sysadmin_config() {
     local mode="${1:-optional}"
     case "$mode" in
@@ -193,6 +340,18 @@ find_sysadmin_config() {
     CONFIG=""
     SYSADMIN_CONFIG_FOUND="false"
 
+    # 1) ОСНОВНОЙ путь: мозг → активный проект → его infra-config.json
+    if find_brain_config; then
+        if resolve_active_project ""; then
+            CONFIG="$ACTIVE_INFRA_CONFIG"
+            SYSADMIN_CONFIG_FOUND="true"
+            return 0
+        fi
+        # мозг есть, но проект/infra-config не разрешился — НЕ молчим, но и не падаем:
+        # пробуем fallback-перебор (вдруг конфиг лежит в типичном месте).
+    fi
+
+    # 2) FALLBACK: старый перебор по типичным путям
     local candidate
     while IFS= read -r candidate; do
         if [ -f "$candidate" ]; then
@@ -223,7 +382,7 @@ find_sysadmin_config() {
             exit 1
             ;;
         optional)
-            echo "WARN: sysadmin-config.json не найден. Использую defaults." >&2
+            echo "WARN: конфиг инфры (infra-config.json / agent-config.json) не найден. Использую defaults." >&2
             echo "      Для точности — запусти /sysadmin-init." >&2
             return 1
             ;;
@@ -231,6 +390,51 @@ find_sysadmin_config() {
             return 1
             ;;
     esac
+}
+
+# Псевдоним с корректным именем (ADR-0013): новые скиллы используют find_infra_config,
+# старые продолжают звать find_sysadmin_config — это одна и та же функция.
+find_infra_config() { find_sysadmin_config "$@"; }
+
+# ──────────────────────────────────────────────────────────────────────────
+# get_agent_field — геттер АГЕНТ-поля (ADR-0013) с legacy-fallback.
+#
+# Агент-поля (operator.language, operator.name, operator.timezone, secrets.manager,
+# secrets.manager_name, secrets.cli_available) после расщепления живут в МОЗГЕ
+# (agent-config.json / $BRAIN_CONFIG), а не в infra-config ($CONFIG). Но в legacy-конфиге
+# (всё-в-одном sysadmin-config.json) они ещё лежат вместе с инфра-полями в $CONFIG —
+# и иногда по ДРУГОМУ jq-пути (язык: мозг .operator.language, legacy top-level .language).
+#
+# Поэтому геттер принимает ДВА пути: для мозга и для legacy.
+#
+# Использование:
+#   get_agent_field ".operator.language" ".language" "ru"      # язык (путь переехал)
+#   get_agent_field ".secrets.manager"   ".secrets.manager" "" # менеджер (путь не менялся)
+#
+# Лениво вызывает find_brain_config, если $BRAIN_CONFIG ещё не выставлен.
+get_agent_field() {
+    local brain_path="$1"
+    local legacy_path="${2:-$1}"
+    local default="${3:-}"
+
+    # лениво находим мозг, если ещё не искали
+    if [ -z "${BRAIN_CONFIG:-}" ] && [ "${BRAIN_CONFIG_FOUND:-}" != "false-tried" ]; then
+        find_brain_config || true
+        [ -z "${BRAIN_CONFIG:-}" ] && BRAIN_CONFIG_FOUND="false-tried"
+    fi
+
+    local v=""
+    if [ -n "${BRAIN_CONFIG:-}" ] && [ -f "${BRAIN_CONFIG:-}" ]; then
+        v=$(jq -r "$brain_path // empty" "$BRAIN_CONFIG" 2>/dev/null)
+    fi
+    if [ -z "$v" ] && [ -n "${CONFIG:-}" ] && [ -f "${CONFIG:-}" ]; then
+        v=$(jq -r "$legacy_path // empty" "$CONFIG" 2>/dev/null)
+    fi
+    if [ -z "$v" ] || [ "$v" = "null" ]; then
+        echo "$default"
+    else
+        echo "$v"
+    fi
 }
 
 # Геттер поля с дефолтом (не падает если поля нет)

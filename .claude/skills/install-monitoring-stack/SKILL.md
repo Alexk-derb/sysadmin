@@ -75,7 +75,7 @@ DOMAIN_FROM_CONFIG=$(get_config_field monitoring.panel_domain)
 TG_ENABLED=$(get_config_field notifications.telegram.enabled false)
 if [ "$TG_ENABLED" = "true" ]; then
     # Сам токен бота читается из менеджера паролей оператора по индексу
-    # (поле secrets.manager в конфиге + конвенция "infra/<bot>/token").
+    # (поле secrets.manager в agent-config.json + конвенция "infra/<bot>/token").
     # Конфиг хранит ИНДЕКС, не значение секрета.
     COMPONENTS_FROM_CONFIG="${COMPONENTS_FROM_CONFIG},telegram"
 fi

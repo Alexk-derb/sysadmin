@@ -50,9 +50,12 @@ CLAUDE.md                    — правила работы Claude в этом 
 README.md                    — главный документ репо: что это, как начать
 CONTRIBUTING.md              — этот файл
 LICENSE                      — лицензия (MIT)
-sysadmin-config.example.json — публичный шаблон конфига (обезличенный)
-sysadmin-config.schema.json  — JSON Schema 2020-12, контракт конфига
-sysadmin-config.json         — твой личный конфиг (в .gitignore, создаётся /sysadmin-init)
+agent-config.example.json    — публичный шаблон конфига МОЗГА (обезличенный)
+agent-config.schema.json     — JSON Schema 2020-12, контракт конфига мозга
+agent-config.json            — твой личный конфиг мозга (в .gitignore, создаётся /sysadmin-init)
+infra-config.example.json    — публичный шаблон конфига КАРТЫ инфры (обезличенный)
+infra-config.schema.json     — JSON Schema 2020-12, контракт конфига карты
+                               (личный infra-config.json живёт в папке проекта infra/, в .gitignore)
 ```
 
 ## Правило безопасности

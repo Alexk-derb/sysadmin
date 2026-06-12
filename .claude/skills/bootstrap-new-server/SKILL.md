@@ -74,10 +74,22 @@ source "$SYSADMIN_ROOT/.claude/skills/_lib/find-config.sh"
 
 # silent: без WARN, $CONFIG="" если не найден
 find_sysadmin_config silent
+find_brain_config || true       # ставит $BRAIN_CONFIG = agent-config.json (агент-поля)
+
+# Агент-поля (ADR-0013): operator.timezone и язык живут в мозге ($BRAIN_CONFIG).
+# Legacy-совместимость: если мозга нет — берём из $CONFIG (старый единый формат).
+#   language переехал в .operator.language (мозг); в legacy — top-level .language.
+get_agent_field() {  # $1=jq-путь-в-мозге, $2=jq-путь-в-legacy, $3=default
+  local v=""
+  [ -n "${BRAIN_CONFIG:-}" ] && v=$(jq -r "$1 // empty" "$BRAIN_CONFIG" 2>/dev/null)
+  [ -z "$v" ] && [ -n "${CONFIG:-}" ] && [ -f "${CONFIG:-}" ] && v=$(jq -r "$2 // empty" "$CONFIG" 2>/dev/null)
+  [ -z "$v" ] && v="$3"
+  echo "$v"
+}
 
 # CLI-override > конфиг > defaults
-TIMEZONE="${TIMEZONE:-$(get_config_field operator.timezone UTC)}"
-LANG_FROM_CONFIG=$(get_config_field language ru)
+TIMEZONE="${TIMEZONE:-$(get_agent_field '.operator.timezone' '.operator.timezone' UTC)}"
+LANG_FROM_CONFIG=$(get_agent_field '.operator.language' '.language' ru)
 # LANG_FROM_CONFIG используется только для локализации сообщений скилла
 ```
 

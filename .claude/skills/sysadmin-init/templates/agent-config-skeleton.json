@@ -1,0 +1,25 @@
+{
+  "$schema": "./agent-config.schema.json",
+  "version": "1.0",
+  "operator": {
+    "name": "__FILL__",
+    "language": "__FILL__",
+    "timezone": "__FILL__"
+  },
+  "secrets": {
+    "manager": "__FILL__"
+  },
+  "projects": [
+    {
+      "id": "__FILL__",
+      "title": "__FILL__",
+      "infra_root": "__FILL__"
+    }
+  ],
+  "default_project": "__FILL__",
+  "interaction": {},
+  "meta": {
+    "onboarding_completed": false,
+    "onboarding_completed_at": null
+  }
+}

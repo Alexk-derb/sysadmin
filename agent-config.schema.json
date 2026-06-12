@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vefmvai/sysadmin/agent-config.schema.json",
+  "title": "Sysadmin Agent — Brain Configuration",
+  "description": "Формальный контракт конфига МОЗГА агента-сисадмина (agent-config.json). Живёт в публичном репо sysadmin/ — это «дом агента». Отвечает за самого агента: кто оператор, на каком языке общаться, какие у него проекты-инфраструктуры и где они живут, режимы взаимодействия. НЕ описывает сами серверы — это делает infra-config.json (см. ADR-0013). Личный agent-config.json — в .gitignore; коммитятся только agent-config.example.json + эта схема.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "operator", "projects", "default_project"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Ссылка на эту схему. Позволяет редакторам (VS Code, JetBrains) подсвечивать ошибки и предлагать автодополнение."
+    },
+    "version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Версия формата конфига мозга. Сейчас единственное допустимое значение — \"1.0\"."
+    },
+    "operator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "language", "timezone"],
+      "description": "Информация об операторе агента — агент-центричные настройки. Раньше эти поля жили в sysadmin-config.json (инфра), теперь переехали в мозг (ADR-0013), потому что описывают взаимодействие агента с оператором, а не сервер.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Имя оператора (как агенту обращаться). Например: Vasily."
+        },
+        "language": {
+          "type": "string",
+          "enum": ["ru", "en"],
+          "description": "Язык общения агента с оператором. ru — русский (по умолчанию), en — английский."
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "description": "IANA-имя часового пояса оператора (например, Europe/Moscow, UTC, Asia/Yekaterinburg). Для отметок времени в логах и отчётах."
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manager"],
+      "description": "Менеджер паролей оператора — агент-центричная настройка (как агент достаёт/указывает секреты). Переехала в мозг из инфра-конфига (ADR-0013): она про поведение агента, а не про конкретный сервер, и общая для всех проектов оператора. Агент НИКОГДА не хранит пароли в репо — только в указанном менеджере.",
+      "properties": {
+        "manager": {
+          "type": "string",
+          "enum": ["keychain", "bitwarden", "1password", "pass", "keepassxc", "other"],
+          "description": "Где оператор хранит секреты. keychain — встроенный в macOS Keychain (default для Mac). bitwarden — облачный, CLI bw. 1password — облачный, CLI op. pass — Unix password manager на gpg. keepassxc — локальная база .kdbx, CLI keepassxc-cli. other — любой другой (Kaspersky, Dashlane, NordPass, браузерный); тогда заполни manager_name и cli_available."
+        },
+        "manager_name": {
+          "type": "string",
+          "description": "Человекочитаемое имя менеджера, когда manager=other. Например: «Kaspersky Password Manager». Агент использует его в указателях на секреты."
+        },
+        "cli_available": {
+          "type": "boolean",
+          "description": "Есть ли у менеджера CLI, через который Claude может автоматически доставать секреты. true — агент может читать секреты сам. false — CLI нет (Kaspersky/браузерные): агент только указывает оператору, где взять руками. Опущено — агент считает CLI недоступным для other и доступным для известных."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "manager": { "const": "other" } } },
+          "then": { "required": ["manager", "manager_name"] }
+        }
+      ]
+    },
+    "projects": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": false,
+      "description": "Реестр проектов-инфраструктур оператора. У оператора может быть несколько папок инфры (например, основной сервер в infra/, отдельный рабочий проект в work-infra/) — каждый со своим infra-config.json. Мозг агента знает про все и где каждый живёт. Минимум 1 проект.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "infra_root"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$",
+            "description": "Короткий машинный идентификатор проекта (kebab-case). Например: main-server, work-cluster. Используется в default_project и в командах переключения проектов."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Человекочитаемое название проекта. Например: «Основной сервер Selectel». Опционально — для удобства оператора."
+          },
+          "infra_root": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Абсолютный путь к папке инфраструктуры этого проекта (где лежат infra-config.json, inventory/, knowledge/, decisions/). Рекомендуется абсолютный путь — реестр в мозге не привязан к cwd, относительный путь теряет смысл. Tilde (~) раскрывается до $HOME. Папка может ещё не существовать на момент /sysadmin-init — скилл предложит создать."
+          },
+          "config": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Путь к infra-config.json этого проекта. Опционально: если опущено — агент берёт <infra_root>/infra-config.json. Указывай явно, только если конфиг лежит не в корне infra_root."
+          }
+        }
+      }
+    },
+    "default_project": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "id проекта из projects[], с которым агент работает по умолчанию при Cold Start. Должен совпадать с одним из projects[].id."
+    },
+    "interaction": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "ЗАРЕЗЕРВИРОВАНО (ADR-0013). Режимы взаимодействия агента с оператором: уровень подтверждений, предпочтения по стилю, любимые инструменты. Пока блок пустой/минимальный — наполняется по мере выявления реальных режимов. additionalProperties=true намеренно: формат полей ещё не зафиксирован."
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Служебные метаданные о состоянии onboarding. Переехало из инфра-конфига (ADR-0013) — это про знакомство оператора с агентом, а не про сервер. Используется агентом и /sysadmin-meet чтобы понимать, прошёл ли пользователь знакомство, и нужно ли мягко напоминать про /sysadmin-meet при Cold Start.",
+      "properties": {
+        "onboarding_completed": {
+          "type": "boolean",
+          "description": "Прошёл ли пользователь знакомство (/sysadmin-meet) или явно отказался. true — напоминания не показываются. false — при каждом Cold Start агент мягко напоминает про /sysadmin-meet."
+        },
+        "onboarding_completed_at": {
+          "type": ["string", "null"],
+          "description": "ISO 8601 timestamp момента, когда onboarding_completed стал true. null — пока не было перехода."
+        }
+      }
+    }
+  }
+}
