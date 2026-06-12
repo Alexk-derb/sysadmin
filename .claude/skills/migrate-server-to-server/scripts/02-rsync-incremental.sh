@@ -11,6 +11,12 @@
 #
 # Скрипт идемпотентен — каждый запуск даёт текущий delta, можно прогонять
 # несколько раз подряд без вреда.
+#
+# 🔴 БЕЗОПАСНОСТЬ: фазы день2/cutover используют rsync --delete — на приёмнике
+# будет удалено всё, чего нет на источнике. Перепутанное направление = уничтожение
+# боевого сервера. Поэтому скрипт:
+#   1) показывает hostname обоих серверов и требует подтвердить направление;
+#   2) для фаз с --delete требует type-to-confirm строку, а не слепой Enter.
 
 set -euo pipefail
 
@@ -22,6 +28,40 @@ if [ -z "$OLD_SERVER" ] || [ -z "$NEW_SERVER" ]; then
     echo "Использование: $0 user@old.vps.com user@new.vps.com [день1|день2|cutover]"
     exit 2
 fi
+
+# --- Сверка направления (все фазы) -------------------------------------------
+# Показываем живые доказательства роли каждого хоста, чтобы перепутанные местами
+# аргументы были видны ДО первой записи на приёмник.
+echo "=== СВЕРКА НАПРАВЛЕНИЯ ==="
+echo "ИСТОЧНИК (читаем):  $OLD_SERVER"
+ssh "$OLD_SERVER" 'echo "  hostname: $(hostname)"; echo "  контейнеры: $(docker ps --format "{{.Names}}" 2>/dev/null | tr "\n" " " | cut -c1-200)"' || {
+    echo "Не удалось опросить источник $OLD_SERVER — STOP"; exit 1; }
+echo "ПРИЁМНИК (пишем, --delete сотрёт лишнее): $NEW_SERVER"
+ssh "$NEW_SERVER" 'echo "  hostname: $(hostname)"; echo "  контейнеры: $(docker ps --format "{{.Names}}" 2>/dev/null | tr "\n" " " | cut -c1-200)"' || {
+    echo "Не удалось опросить приёмник $NEW_SERVER — STOP"; exit 1; }
+echo ""
+echo "Проверь глазами: данные потекут $OLD_SERVER → $NEW_SERVER."
+printf 'Если направление верное, введи слово НАПРАВЛЕНИЕ-ВЕРНОЕ: '
+read -r DIRECTION_CONFIRM
+if [ "$DIRECTION_CONFIRM" != "НАПРАВЛЕНИЕ-ВЕРНОЕ" ]; then
+    echo "Подтверждение не получено — STOP (введено: '$DIRECTION_CONFIRM')"
+    exit 1
+fi
+
+# --- Type-to-confirm для фаз с --delete ---------------------------------------
+confirm_delete_phase() {
+    local phase_name="$1"
+    echo ""
+    echo "🔴 RED ZONE: фаза '$phase_name' использует rsync --delete."
+    echo "На приёмнике $NEW_SERVER будет УДАЛЕНО всё в /var/lib/docker/volumes/,"
+    echo "чего нет на источнике $OLD_SERVER. Откат — только из бэкапа приёмника."
+    printf 'Введи подтверждение (подтверждаю rsync --delete на %s, бэкап целевого проверен): ' "$NEW_SERVER"
+    read -r DELETE_CONFIRM
+    if [ "$DELETE_CONFIRM" != "подтверждаю rsync --delete на $NEW_SERVER, бэкап целевого проверен" ]; then
+        echo "Type-to-confirm не совпал — STOP"
+        exit 1
+    fi
+}
 
 LINK_DEST=""
 if [ "$PHASE" != "день1" ]; then
@@ -43,6 +83,7 @@ case "$PHASE" in
             "$NEW_SERVER":/var/lib/docker/volumes/
         ;;
     день2)
+        confirm_delete_phase "день2"
         echo "[Delta rsync — обычно секунды-минуты]"
         # shellcheck disable=SC2086
         # ($LINK_DEST раскрывается в "--link-dest=/path" — должно быть split на 1 аргумент)
@@ -52,10 +93,15 @@ case "$PHASE" in
             "$NEW_SERVER":/var/lib/docker/volumes/
         ;;
     cutover)
+        confirm_delete_phase "cutover"
         echo "[Финальный rsync с предварительным stop сервисов на старом]"
-        echo "ВНИМАНИЕ: этот шаг останавливает сервисы на старом сервере."
-        echo "Подтверди что готов к downtime, нажми Enter..."
-        read -r
+        echo "ВНИМАНИЕ: этот шаг останавливает сервисы на старом сервере ($OLD_SERVER)."
+        printf 'Подтверди готовность к downtime словом ГОТОВ: '
+        read -r DOWNTIME_CONFIRM
+        if [ "$DOWNTIME_CONFIRM" != "ГОТОВ" ]; then
+            echo "Подтверждение не получено — STOP"
+            exit 1
+        fi
 
         # Stop сервисов на старом — НЕ down, чтобы был быстрый откат
         ssh "$OLD_SERVER" "

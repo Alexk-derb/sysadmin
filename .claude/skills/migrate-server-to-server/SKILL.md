@@ -44,18 +44,46 @@ pre-migration checklist обязателен, rollback готов в любой 
 
 # Инструкции
 
+## ⚠️ Зоны риска этого скилла
+
+Большинство шагов миграции — Yellow Zone (брифинг + «ок»). Но две категории операций —
+**Red Zone** (4-шаговая процедура ASSESS → PROPOSE → EXECUTE → VERIFY с type-to-confirm,
+канон — в персоне и `references/trust-zones.md`):
+
+1. **`rsync --delete` на целевой сервер** — стирает на приёмнике всё, чего нет на
+   источнике. Перепутанные местами хосты = необратимое уничтожение боевого сервера
+   одной командой.
+2. **Распаковка архива поверх корня** (`tar xzf ... -C /`) — перезаписывает живые
+   файлы целевой системы без возможности отката.
+
+Для этих операций «ок» оператора недостаточно — обязателен type-to-confirm после
+брифинга, который явно называет: **что будет безвозвратно перезаписано/удалено на
+целевом сервере и есть ли свежая копия этих данных**.
+
 ## Шаг 1. Pre-migration checklist (БЛОКЕР запуска)
 
-Без этих пяти пунктов миграция не начинается. Это не «лучшая практика», а условие безопасности.
+Без этих семи пунктов миграция не начинается. Это не «лучшая практика», а условие безопасности.
 
+- [ ] **Сверка направления «откуда → куда»** — показать оператору ОБА хоста рядом
+      с живыми доказательствами их ролей (`ssh <host> 'hostname && uptime && docker ps
+      --format "{{.Names}}" | head -20'` для каждого). Оператор подтверждает явно:
+      «источник = X (боевой), целевой = Y (новый/пустой)». Если на целевом обнаружены
+      работающие контейнеры или непустые volumes — STOP: целевой не пустой, продолжение
+      только после явного письменного одобрения оператора «целевой одобрен к перезаписи».
 - [ ] Inventory старого сервера актуален — запусти `inventory-scan` если последний
       снимок старше 7 дней.
 - [ ] Размеры volumes известны: `du -sh /var/lib/docker/volumes/*` — нужно для
       оценки времени rsync и свободного места на новом сервере.
 - [ ] Зависимости каждого сервиса задокументированы — что нельзя переносить по
       одному (app+postgres, nginx+certificates, redis+app-with-sessions).
-- [ ] Свежий бэкап перед миграцией: pg_dumpall + tar volumes + restic backup —
+- [ ] Свежий бэкап ИСХОДНОГО сервера: pg_dumpall + tar volumes + restic backup —
       offsite. Без бэкапа миграция запрещена даже на «маленьких» сервисах.
+- [ ] **Свежий бэкап ЦЕЛЕВОГО сервера** — перед первой записью на целевой
+      (`bash scripts/01-pre-migration-backup.sh user@new-server`, тег `pre-migration-target`).
+      Целевой обычно «пустой после bootstrap», но именно это предположение и убивает
+      данные при перепутанном направлении или недопонятой роли хоста. Если на целевом
+      реально нечего бэкапить (нет volumes, нет БД) — зафиксировать это вслух
+      результатом команды, а не предположением.
 - [ ] Новый сервер прошёл `bootstrap-new-server` — Docker, UFW, fail2ban, SSH
       hardening готовы. Без этого новый сервер уязвим в окне миграции.
 
@@ -82,6 +110,23 @@ pre-migration checklist обязателен, rollback готов в любой 
 5. **Откат:** конкретные команды, которые вернут на старый сервер.
 6. **Подтверждение:** оператор пишет согласие явной фразой.
 
+Этот брифинг одобряет миграцию В ЦЕЛОМ. Но если выбранная стратегия содержит
+`rsync --delete` или распаковку архива поверх `/` (стратегии rsync-incremental и
+backup-restore) — каждая такая операция дополнительно проходит **Red Zone**
+непосредственно перед запуском:
+
+1. **ASSESS** — перечитать направление: источник и приёмник в команде, доказательство
+   роли каждого (вывод `hostname` с обоих). Что именно на приёмнике будет удалено
+   `--delete` / перезаписано распаковкой?
+2. **PROPOSE** — брифинг с обязательной строкой: «На целевом `<host>` будет
+   безвозвратно удалено/перезаписано: <конкретно что>. Копия этих данных: <есть,
+   путь/тег | нечего копировать — доказано выводом такой-то команды>». Затем
+   type-to-confirm: `подтверждаю rsync --delete на <целевой-host>, беру риск на себя,
+   бэкап целевого проверен` (аналогично для tar).
+3. **EXECUTE** — ровно та команда, что в брифинге.
+4. **VERIFY** — сверка результата (row counts / списки файлов), запись о факте
+   Red Zone-операции в журнал миграции (runbook).
+
 ## Шаг 3. Стратегия-специфичная процедура
 
 ### 3.1 Backup-Restore (наиболее частый случай)
@@ -99,6 +144,8 @@ ssh "$OLD_SERVER" 'tar czf /backup/docker-volumes.tar.gz /var/lib/docker/volumes
 ssh "$OLD_SERVER" 'scp /backup/*.gz '"$NEW_SERVER"':/tmp/'
 
 # 4. На новом — восстановить compose, разархивировать, поднять
+# 🔴 RED ZONE: tar xzf ... -C / перезаписывает файлы целевой системы поверх корня.
+#    Перед запуском — 4-шаговая процедура с type-to-confirm (см. «Зоны риска» выше).
 ssh "$NEW_SERVER" 'cd /opt/<service> && git pull && tar xzf /tmp/docker-volumes.tar.gz -C /'
 ssh "$NEW_SERVER" 'cd /opt/<service> && docker compose up -d postgres'
 ssh "$NEW_SERVER" 'gunzip < /tmp/full.sql.gz | docker exec -i postgres psql -U postgres'
@@ -114,14 +161,19 @@ ssh "$NEW_SERVER" 'cd /opt/<service> && docker compose up -d'
 
 Применимо: средний объём данных, есть несколько дней на параллельную работу.
 
+🔴 **RED ZONE на каждом `--delete`:** прогоны дня 2 и cutover стирают на приёмнике
+всё, чего нет на источнике. Каждый запуск с `--delete` — через 4-шаговую процедуру
+с type-to-confirm (см. «Зоны риска» выше); в брифинге — оба хоста и что будет удалено
+на приёмнике.
+
 ```bash
-# День 1 — первый полный rsync (старый сервис ещё работает)
+# День 1 — первый полный rsync (старый сервис ещё работает; без --delete)
 rsync -avz --progress /var/lib/docker/volumes/ "$NEW_SERVER":/var/lib/docker/volumes/
 
-# День 2 — повторный rsync (только delta, быстро)
+# День 2 — повторный rsync (только delta, быстро) — 🔴 RED ZONE (--delete)
 rsync -avz --progress --delete /var/lib/docker/volumes/ "$NEW_SERVER":/var/lib/docker/volumes/
 
-# День 3 — cutover окно
+# День 3 — cutover окно — 🔴 RED ZONE (--delete)
 ssh "$OLD_SERVER" 'cd /opt/<service> && docker compose stop'
 rsync -avz --progress --delete /var/lib/docker/volumes/ "$NEW_SERVER":/var/lib/docker/volumes/
 ssh "$NEW_SERVER" 'cd /opt/<service> && docker compose up -d'
@@ -249,13 +301,14 @@ curl -sSf https://<domain>/health
 # Пятница вечер: полный rsync
 rsync -avz /var/lib/docker/volumes/ new:/var/lib/docker/volumes/  # ~5 мин
 
-# Суббота утро: delta rsync
+# Суббота утро: delta rsync — 🔴 RED ZONE (--delete), type-to-confirm перед запуском
 rsync -avz --delete /var/lib/docker/volumes/ new:/var/lib/docker/volumes/  # ~30 сек
 
 # Суббота вечер: cutover окно
 ssh old 'docker compose -f /opt/bot1/docker-compose.yml stop'
 ssh old 'docker compose -f /opt/bot2/docker-compose.yml stop'
 ssh old 'docker compose -f /opt/bot3/docker-compose.yml stop'
+# 🔴 RED ZONE (--delete), type-to-confirm перед запуском
 rsync -avz --delete /var/lib/docker/volumes/ new:/var/lib/docker/volumes/  # ~5 сек delta
 ssh new 'cd /opt/bot1 && docker compose up -d'
 # ... остальные боты
