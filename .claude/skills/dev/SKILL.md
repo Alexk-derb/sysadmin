@@ -68,6 +68,12 @@ b=$(wc -c < CLAUDE.md | tr -d ' '); echo "Бюджет ядра CLAUDE.md: ${b} 
    Активируется один раз на машине: `git config core.hooksPath .githooks` (после
    `git clone`; `/sysadmin-init` делает это сам). Осознанный обход — `git commit --no-verify`,
    не по привычке.
+5. **Правишь `.claude/knowledge/`** — прогони валидатор
+   `python3 scripts/validate-knowledge.py`: проверяет frontmatter (YAML + ключи +
+   layer↔каталог + ttl↔канон 14/60/365), битые путевые ссылки, сироты. Тот же
+   `.githooks/pre-commit` запускает его на коммитах, трогающих knowledge (если есть
+   python3), и блокирует при проблемах. Свежесть по датам — отдельно
+   `check-knowledge-freshness.sh` (его лениво зовёт персона §4.2 перед VPN-задачей).
 
 ## 2. Изменил состав скиллов → обнови документацию (в том же коммите)
 
@@ -120,6 +126,7 @@ ADR** (анти-храповик: cap не ползёт молча). Лимит 
 <finish>
 Перед завершением правки мозга самопроверка:
 - [ ] Тронул `references/` или ядро → линтер `check-persona-sync.sh` = PASS.
+- [ ] Тронул `.claude/knowledge/` → `python3 scripts/validate-knowledge.py` = 🟢.
 - [ ] Изменил состав скиллов → README + sysadmin-meet + §8.3 CLAUDE.md обновлены, число сверено.
 - [ ] Создал документ/папку → ссылка из CLAUDE.md/README добавлена.
 - [ ] Изменил конституцию или принял крупное решение → ADR заведён и связан.
