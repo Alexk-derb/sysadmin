@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # check-persona-sync.sh — линтер согласованности двухслойной персоны агента.
 #
-# ЗАЧЕМ. Персона живёт в двух слоях:
-#   - выжимка        .claude/agents/sysadmin.md          (читается КАЖДЫЙ старт)
-#   - полный слой    .claude/agents/references/*.md       (по ссылке из выжимки)
+# ЗАЧЕМ. Персона живёт в двух слоях (ADR-0015 — ядро переехало в CLAUDE.md):
+#   - ядро (выжимка) CLAUDE.md                            (читается КАЖДЫЙ старт)
+#   - полный слой    .claude/agents/references/*.md       (по ссылке из ядра)
 # Когда правят полный слой, а выжимку забывают — выжимка начинает врать или
 # терять шаги, и агент на старте идёт по устаревшей версии. Этот линтер ловит
 # рассинхрон ДО коммита. Правило — CLAUDE.md «персона двухслойна».
@@ -38,7 +38,10 @@ else
     ROOT="$(cd "$SELF/../../.." && pwd)"
 fi
 
-PERSONA="$ROOT/.claude/agents/sysadmin.md"
+# Ядро персоны переехало в CLAUDE.md (ADR-0015). Если его нет (например, очень старая
+# установка до 2.0) — fallback на legacy-расположение в agents/sysadmin.md.
+PERSONA="$ROOT/CLAUDE.md"
+[ -f "$PERSONA" ] || PERSONA="$ROOT/.claude/agents/sysadmin.md"
 REFDIR="$ROOT/.claude/agents/references"
 VPNREF="$REFDIR/vpn-reflexes.md"
 COLDSTART="$REFDIR/cold-start.md"

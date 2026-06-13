@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # .githooks/pre-commit — версионируемый pre-commit hook репо sysadmin.
 #
-# ЗАЧЕМ. Персона агента двухслойна (выжимка sysadmin.md ↔ references/*.md).
+# ЗАЧЕМ. Персона агента двухслойна (ядро CLAUDE.md ↔ references/*.md; ADR-0015).
 # Рассинхрон между слоями = неправильное/пропущенное действие агента на старте
 # (реальные инциденты v1.9.1–v1.9.3). Этот хук НЕ ДАЁТ закоммитить персону с
 # рассинхроном: если в индексе есть правки персоны — прогоняет линтер
@@ -26,7 +26,10 @@ STAGED="$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null)"
 
 PERSONA_TOUCHED=0
 case "$STAGED" in
-    *".claude/agents/sysadmin.md"*)            PERSONA_TOUCHED=1 ;;
+    *"CLAUDE.md"*)                             PERSONA_TOUCHED=1 ;;  # ядро (ADR-0015)
+esac
+case "$STAGED" in
+    *".claude/agents/sysadmin.md"*)            PERSONA_TOUCHED=1 ;;  # legacy/заглушка
 esac
 case "$STAGED" in
     *".claude/agents/references/"*)            PERSONA_TOUCHED=1 ;;
@@ -49,7 +52,7 @@ if bash "$LINTER" --root "$ROOT" >&2; then
 else
     echo >&2
     echo "❌ pre-commit ЗАБЛОКИРОВАН: персона рассинхронизирована (выжимка ↔ references)." >&2
-    echo "   Синхронизируй выжимку sysadmin.md и references/ (см. CLAUDE.md «персона двухслойна»)," >&2
+    echo "   Синхронизируй ядро CLAUDE.md и references/ (см. CLAUDE.md «персона двухслойна»)," >&2
     echo "   затем повтори коммит. Осознанный обход (редко): git commit --no-verify" >&2
     exit 1
 fi
