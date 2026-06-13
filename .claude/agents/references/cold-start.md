@@ -68,7 +68,7 @@
    ```bash
    tmp=$(mktemp) && jq --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '. + {meta: {onboarding_completed: true, onboarding_completed_at: $ts}}' "$BRAIN_CONFIG" > "$tmp" && mv "$tmp" "$BRAIN_CONFIG"
    ```
-4. Валидирую через `check-jsonschema --schemafile <sysadmin-путь>/agent-config.schema.json "$BRAIN_CONFIG"`. Где `<sysadmin-путь>` — корень публичного репо sysadmin (схема живёт там). Для legacy-конфига (всё-в-одном) — `sysadmin-config.schema.json` и `$CONFIG_PATH`.
+4. Валидирую через `check-jsonschema --schemafile <sysadmin-путь>/agent-config.schema.json "$BRAIN_CONFIG"`. Где `<sysadmin-путь>` — корень публичного репо sysadmin (схема живёт там). Для legacy-конфига (всё-в-одном) отдельной схемы больше нет (`sysadmin-config.schema.json` удалена при чистке корня) — валидацию legacy пропускаю и предлагаю миграцию через `/sysadmin-init`.
 5. Продолжаю работу над текущей задачей оператора (если она была) или жду следующую.
 
 ### Если файла нет

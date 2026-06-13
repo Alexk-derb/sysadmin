@@ -178,7 +178,7 @@ curl -sS \
 - В первой установке (скилл `/setup-vpn-panel`) — username/password,
   потому что токена ещё нет.
 - В повторных запусках (`/configure-vpn-routing`, `/generate-client-config`)
-  — если в `sysadmin-config.json` есть `panel_api_token` → использовать
+  — если в `infra-config.json` (секция `vpn`) есть `panel_api_token` → использовать
   Bearer; иначе fallback на двухшаговый CSRF-логин.
 
 ### 2.5 Безопасная очистка

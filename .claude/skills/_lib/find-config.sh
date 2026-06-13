@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# find-config.sh — единая функция поиска sysadmin-config.json
+# find-config.sh — единая функция поиска конфига агента (agent-config.json мозг +
+#                   infra-config.json карта; legacy sysadmin-config.json — fallback)
 #
 # Используется во всех скиллах, которым нужен конфиг оператора.
 # Алгоритм поиска идентичен Cold Start Protocol персоны
@@ -99,7 +100,7 @@ resolve_infra_path() {
 }
 
 # Определить SYSADMIN_ROOT (корень sysadmin/ репо) — нужно, например, для доступа
-# к sysadmin-config.schema.json и другим артефактам мозга агента.
+# к agent-config.schema.json и другим артефактам мозга агента.
 # Алгоритм: bridge-файл ~/.claude/agents/sysadmin.md содержит абсолютный путь
 # к актуальному sysadmin/ в строке формата "**`/path/to/sysadmin/`**".
 # Если bridge нет — пробуем типичные локации и cwd-эвристики.
@@ -195,7 +196,7 @@ EOF
 # Универсальное сообщение «не нашёл»
 _sysadmin_not_found_message() {
     cat <<'EOF' >&2
-sysadmin-config.json не найден ни в одном из стандартных мест:
+Конфиг инфры (infra-config.json; legacy sysadmin-config.json) не найден ни в одном из стандартных мест:
   ./, ../infra/, ~/infra/, ~/work/infra/, ~/projects/infra/
   + переменная окружения $INFRA_DIR (если задана).
 
