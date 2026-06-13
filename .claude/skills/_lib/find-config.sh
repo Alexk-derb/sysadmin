@@ -45,6 +45,22 @@
 _SYSADMIN_FIND_CONFIG_LOADED=1
 
 # ──────────────────────────────────────────────────────────────────────────
+# require_jq — жёсткая проверка наличия jq (P10). Этот файл и большинство скиллов
+# гоняют jq для чтения конфигов/JSON; без него вместо КРИПТОВОГО «jq: command not
+# found» на середине — понятный STOP с инструкцией. jq — обязательная зависимость.
+# (Полный гейт с авто-доустановкой — _lib/ensure-local-env.sh, его зовёт /sysadmin-init.)
+# Скиллы, использующие jq БЕЗ поиска конфига, могут позвать require_jq напрямую:
+#   source "<...>/_lib/find-config.sh"; require_jq || exit 1
+require_jq() {
+    command -v jq >/dev/null 2>&1 && return 0
+    echo "ОШИБКА: jq не установлен — без него агент не читает конфиги и JSON." >&2
+    echo "        Поставь: macOS — 'brew install jq'; Debian/Ubuntu — 'sudo apt install jq';" >&2
+    echo "        Windows — 'winget install jqlang.jq' (перезапусти сессию). Затем повтори." >&2
+    echo "        Полная настройка окружения с авто-доустановкой — запусти /sysadmin-init." >&2
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────
 # resolve_infra_path — ЕДИНЫЙ резолвер пути к папке инфры из root_path.
 #
 # Канон (ADR-0008, fix v1.4.2): относительный root_path резолвится ОТНОСИТЕЛЬНО
@@ -223,6 +239,8 @@ EOF
 find_brain_config() {
     BRAIN_CONFIG=""
     BRAIN_CONFIG_FOUND="false"
+
+    require_jq || exit 1           # P10: без jq дальше ничего не прочитать — STOP с инструкцией
 
     locate_sysadmin_root || true   # заполняет $SYSADMIN_ROOT (может быть пустым)
 
