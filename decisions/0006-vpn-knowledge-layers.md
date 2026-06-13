@@ -128,4 +128,4 @@ ADR-0003 ввёл `.claude/knowledge/<домен>/` как место общих
   `_meta/` — почти нет).
 - **План `cached-dancing-sunrise`** в `/Users/vasiliy/.claude/plans/` — ночная
   сессия, в которой это решение реализовано.
-- **Отчёт `SESSION-VPN-LIVE-KNOWLEDGE-2026-05-17.md`** — что фактически сделано.
+- **Отчёт `docs/archive/SESSION-VPN-LIVE-KNOWLEDGE-2026-05-17.md`** — что фактически сделано.
