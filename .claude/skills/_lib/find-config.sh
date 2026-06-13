@@ -106,11 +106,13 @@ resolve_infra_path() {
 # Если bridge нет — пробуем типичные локации и cwd-эвристики.
 #
 # Маркер корня (задача 0.5 рефакторинга, мина P12): версионируемый файл
-# `.sysadmin-root` — устойчивый признак, НЕ зависящий от файла персоны
-# (.claude/agents/sysadmin.md в 2.0 переедет в CLAUDE.md). Старый признак
-# оставлен запасным для установок, где обновили только часть файлов.
+# `.sysadmin-root` — устойчивый признак, НЕ зависящий от файла персоны. В 2.0
+# (ADR-0015) ядро персоны переехало в CLAUDE.md, а .claude/agents/sysadmin.md стал
+# тонкой заглушкой — поэтому основной маркер именно `.sysadmin-root`. Запасные
+# признаки (CLAUDE.md, заглушка persona) оставлены для частично обновлённых установок.
 _is_sysadmin_root() {
     [ -f "$1/.sysadmin-root" ] && return 0
+    [ -f "$1/CLAUDE.md" ] && [ -d "$1/.claude/skills" ] && return 0   # 2.0: ядро в CLAUDE.md
     [ -f "$1/.claude/agents/sysadmin.md" ] && return 0   # legacy-признак (до 2.0)
     return 1
 }

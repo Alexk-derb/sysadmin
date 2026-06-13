@@ -10,10 +10,10 @@ infra-config.json
 !infra-config.example.json
 !infra-config.schema.json
 
-# Старые имена (до ADR-0013) — переходный период, удаляются после миграции.
+# Старое имя конфига (до ADR-0013) — у пользователя может остаться legacy-файл,
+# его не коммитим. Публичные шаблоны sysadmin-config.* удалены в 1.12.0 (заменены
+# agent-config.* + infra-config.*), поэтому negation-правил для них больше нет.
 sysadmin-config.json
-!sysadmin-config.example.json
-!sysadmin-config.schema.json
 
 # Бэкап-копии конфигов и любых файлов (создаются /sysadmin-init при миграции,
 # sed -i.bak и т.п.) — личные данные не должны уехать в коммит (P17).
@@ -36,6 +36,12 @@ sysadmin-config.json
 
 # Claude Code служебные файлы
 .claude/scheduled_tasks.lock
+
+# Личные пользовательские настройки Claude Code (ADR-0015, задача 2.3): персональные
+# переопределения оператора. Общие настройки команды — в tracked .claude/settings.json
+# (если понадобятся). Вход «открыл папку → ты сисадмин» обеспечивает CLAUDE.md, а НЕ
+# settings.json `agent` (см. ADR-0015), поэтому settings.json не обязателен.
+.claude/settings.local.json
 
 # Метка последней проверки обновлений (у каждого оператора своя)
 .update-check

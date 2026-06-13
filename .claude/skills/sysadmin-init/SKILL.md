@@ -698,6 +698,41 @@ mv "$AGENT_DRAFT" "$AGENT_PATH"
 mv "$INFRA_DRAFT" "$INFRA_CONFIG_PATH"
 ```
 
+### Шаг 10.4: выездной bridge-указатель (`@sysadmin` из любой папки)
+
+**Зачем:** чтобы агента можно было звать `@sysadmin` из чужого проекта, в `~/.claude/agents/`
+кладётся тонкий указатель с абсолютным путём к `sysadmin/`. Его читают `find-config.sh`
+(находит `$SYSADMIN_ROOT`) и сам агент (идёт за ядром). Под 2.0 (ADR-0015) ядро персоны —
+в `CLAUDE.md`, поэтому bridge ведёт именно туда. Создаю при работе внутри `sysadmin/` (когда
+`$SYSADMIN_ROOT` известен); существующий bridge перезаписываю свежим путём.
+
+```bash
+BRIDGE_DIR="$HOME/.claude/agents"
+BRIDGE="$BRIDGE_DIR/sysadmin.md"
+mkdir -p "$BRIDGE_DIR" || echo "WARN: не создать $BRIDGE_DIR — bridge пропускаю, @sysadmin из чужих папок будет недоступен."
+if [ -d "$BRIDGE_DIR" ]; then
+  cat > "$BRIDGE" <<EOF
+---
+name: sysadmin
+description: Агент-сисадмин персональной инфраструктуры (выездной указатель). Полная персона — в CLAUDE.md репозитория sysadmin/.
+model: inherit
+---
+
+# Sysadmin Agent — выездной указатель (bridge, ADR-0015)
+
+Ядро персоны (ценности, конституция, три зоны, протоколы) живёт в \`CLAUDE.md\` репозитория
+sysadmin/ по пути:
+
+**\`$SYSADMIN_ROOT/\`**
+
+При вызове \`@sysadmin\` из любой папки: прочитай \`$SYSADMIN_ROOT/CLAUDE.md\` — это ядро;
+детальные протоколы — в \`$SYSADMIN_ROOT/.claude/agents/references/\`. Инструменты не
+ограничиваю (наследую от родителя, включая Skill для запуска скиллов).
+EOF
+  echo "✅ bridge-указатель записан: $BRIDGE (путь к мозгу: $SYSADMIN_ROOT)"
+fi
+```
+
 ### Шаг 10.5: FINAL CHECK — ОБА конфига РЕАЛЬНО на диске и валидны
 
 **Зачем:** без этой проверки скилл может напечатать «Готово», когда запись на самом деле
