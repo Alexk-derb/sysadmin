@@ -336,9 +336,12 @@ resolve_active_project() {
 #
 # Порядок (ADR-0013):
 #   1. ОСНОВНОЙ путь — мозг: find_brain_config → resolve_active_project →
-#      $CONFIG = infra-config.json активного проекта. Без перебора.
+#      $CONFIG = infra-config.json активного проекта. Без перебора. Активный проект:
+#      $SYSADMIN_PROJECT (явное переключение в сессии) → иначе default_project.
+#      Мозг есть, но проект не разрешился → ПОВРЕЖДЁННАЯ КАРТА → STOP (НЕ тихий fallback:
+#      перебор увёл бы на чужую инфраструктуру, P15).
 #   2. FALLBACK — старый перебор по типичным путям (_sysadmin_config_candidates),
-#      когда мозга нет (новый пользователь / старая установка до миграции).
+#      ТОЛЬКО когда мозга нет вовсе (новый пользователь / старая установка до миграции).
 #
 # Совместимость: имя функции и переменные ($CONFIG, $SYSADMIN_CONFIG_FOUND) сохранены —
 # 12 скиллов-потребителей не требуют правок. find_infra_config — псевдоним (см. ниже).
@@ -354,15 +357,30 @@ find_sysadmin_config() {
     CONFIG=""
     SYSADMIN_CONFIG_FOUND="false"
 
-    # 1) ОСНОВНОЙ путь: мозг → активный проект → его infra-config.json
+    # 1) ОСНОВНОЙ путь: мозг → активный проект → его infra-config.json.
+    #    Какой проект активен: $SYSADMIN_PROJECT (явное переключение в сессии, P14) →
+    #    иначе default_project из мозга. Так оператор работает с НЕ-дефолтным проектом,
+    #    не трогая конфиг: `export SYSADMIN_PROJECT=<id>` перед запуском скилла.
     if find_brain_config; then
-        if resolve_active_project ""; then
+        if resolve_active_project "${SYSADMIN_PROJECT:-}"; then
             CONFIG="$ACTIVE_INFRA_CONFIG"
             SYSADMIN_CONFIG_FOUND="true"
             return 0
         fi
-        # мозг есть, но проект/infra-config не разрешился — НЕ молчим, но и не падаем:
-        # пробуем fallback-перебор (вдруг конфиг лежит в типичном месте).
+        # Мозг есть и АВТОРИТЕТЕН: он явно указывает, где карта проекта. Если она не
+        # разрешилась (нет проекта с таким id / битый infra_root / нет/невалиден
+        # infra-config.json) — это ПОВРЕЖДЁННАЯ КАРТА, а не повод искать в другом месте.
+        # НЕ делаем тихий fallback-перебор (P15): он мог бы подцепить ЧУЖОЙ infra-config
+        # из типичного пути и увести агента на НЕ ТУ инфраструктуру. Обнуляем и STOP.
+        ACTIVE_INFRA_ROOT=""; ACTIVE_INFRA_CONFIG=""; CONFIG=""; SYSADMIN_CONFIG_FOUND="false"
+        echo "ERROR: мозг (agent-config.json) есть, но карта проекта не разрешилась (причина выше)." >&2
+        echo "       НЕ угадываю другой конфиг по типичным путям — это увело бы на чужую инфраструктуру." >&2
+        echo "       Почини projects[]/infra_root в мозге или infra-config.json проекта." >&2
+        [ -n "${SYSADMIN_PROJECT:-}" ] && echo "       (SYSADMIN_PROJECT='${SYSADMIN_PROJECT}' — проверь, что такой id есть в projects[].)" >&2
+        case "$mode" in
+            strict) exit 1 ;;
+            optional|silent) return 1 ;;
+        esac
     fi
 
     # 2) FALLBACK: старый перебор по типичным путям
