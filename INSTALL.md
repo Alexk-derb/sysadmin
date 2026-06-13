@@ -194,19 +194,21 @@ description: >
   Использует политику трёх зон доверия (зелёная/жёлтая/красная) и сеньор-ментор стиль —
   объясняет, обучает, оспаривает опасные решения. Все скиллы выбирает сам — оператор
   просто описывает задачу словами, не запоминая имена команд.
-tools: Bash, Read, Write, Edit, Glob, Grep
 model: inherit
 ---
 
-# Sysadmin Agent — bridge
+# Sysadmin Agent — bridge (ADR-0015)
 
 Я — агент-сисадмин. Полный мозг (персона, конституция, 20 скиллов, knowledge) живёт:
 
 **\`$SYSADMIN_PATH\`**
 
+> Инструменты не ограничиваю (\`tools:\` опущен) — наследую все от родителя, включая
+> Skill (иначе не смог бы запускать скиллы из \`.claude/skills/\`).
+
 ## Cold Start
 
-1. Прочитай ядро персоны: \`$SYSADMIN_PATH/.claude/agents/sysadmin.md\`
+1. Прочитай ядро персоны: \`$SYSADMIN_PATH/CLAUDE.md\` (вход 2.0 — ядро переехало в CLAUDE.md, ADR-0015)
 2. Дальше следуй Cold Start Protocol из персоны (\`references/cold-start.md\`):
    - Прочитай \`agent-config.json\` (мозг) в корне \`$SYSADMIN_PATH\` → оператор, язык, реестр проектов; возьми \`default_project\` → его \`infra_root\` и \`infra-config.json\` (карта). Если \`agent-config.json\` нет — fallback на поиск legacy \`sysadmin-config.json\` в \`infra/\` (ADR-0013)
    - Прочитай \`infra/inventory/README.md\` и \`infra/inventory/topology.md\`
@@ -221,7 +223,7 @@ model: inherit
 
 ## Если что-то не нашёл
 
-Если \`$SYSADMIN_PATH/.claude/agents/sysadmin.md\` не существует — репо переехал или удалён. Сообщи оператору и попроси указать актуальный путь.
+Если \`$SYSADMIN_PATH/CLAUDE.md\` не существует — репо переехал или удалён. Сообщи оператору и попроси указать актуальный путь.
 BRIDGE_EOF
 
 echo "Создан bridge: ~/.claude/agents/sysadmin.md → $SYSADMIN_PATH"
@@ -247,8 +249,8 @@ echo "Создан bridge: ~/.claude/agents/sysadmin.md → $SYSADMIN_PATH"
 
 > Готово. Установка завершена. У тебя теперь:
 >
-> - **Bridge**: `~/.claude/agents/sysadmin.md` (Claude видит @sysadmin везде)
-> - **Мозг**: `$SYSADMIN_PATH` (публичный, обновляется командой «обнови sysadmin» — fetch + свежий тег)
+> - **Bridge**: `~/.claude/agents/sysadmin.md` (для вызова `@sysadmin` из чужих папок)
+> - **Мозг**: `$SYSADMIN_PATH` (публичный; ядро персоны — в `CLAUDE.md`, грузится при открытии папки; обновляется «обнови sysadmin»)
 > - **Данные**: `$INFRA_PATH` (приватный, твой)
 > - **Конфиг мозга**: `$SYSADMIN_PATH/agent-config.json` (оператор, реестр проектов)
 > - **Конфиг карты**: `$INFRA_PATH/infra-config.json` (серверы, мониторинг, бэкапы — по твоим ответам)
@@ -256,7 +258,7 @@ echo "Создан bridge: ~/.claude/agents/sysadmin.md → $SYSADMIN_PATH"
 > **Что дальше:**
 >
 > 1. **Если первый раз видишь агента** — рекомендую `/sysadmin-meet` (~20 мин, ELI5-знакомство). Можно запустить прямо сейчас.
-> 2. **Иначе** — просто из любой папки пиши `@sysadmin привет, познакомься с моим сервером` — он сам разберётся.
+> 2. **Основной способ работы (2.0):** открой папку `sysadmin/` в Claude Code (`cd sysadmin && claude` в терминале или открой в IDE/desktop) и пиши обычными фразами — ты сразу говоришь с сисадмином, персона грузится из `CLAUDE.md`. Из **другой** папки — подключи через `/add-dir <путь-к-sysadmin>` или вызови разово `@sysadmin <запрос>` (для этого и нужен bridge).
 >
 > **Обновления:** агент сам раз в сутки проверит новые версии и предложит обновиться. Команда «обнови sysadmin» — в любой момент. Переходы между версиями — `UPGRADE.md`.
 >
