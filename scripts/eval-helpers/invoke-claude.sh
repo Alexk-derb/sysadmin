@@ -36,12 +36,23 @@ command -v jq >/dev/null 2>&1     || { echo "error: jq not installed" >&2; exit 
 # (где есть SKILL.md; _lib не скилл) — модель обязана выбрать точное имя из него.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SKILLS_DIR="$REPO_ROOT/.claude/skills"
-skill_list=$(find "$SKILLS_DIR" -maxdepth 2 -name SKILL.md -exec dirname {} \; \
-    | xargs -n1 basename | sort | paste -sd ', ' -)
-if [[ -z "$skill_list" ]]; then
+# ВНИМАНИЕ: путь к репо может содержать пробелы (напр. «Claude Code»), поэтому
+# никаких find|xargs|basename — они режут по пробелу. Перебираем директории
+# globом с кавычками и собираем имена в отсортированный список через запятую.
+declare -a _skill_names=()
+for _d in "$SKILLS_DIR"/*/; do
+    [[ -f "${_d}SKILL.md" ]] || continue   # _lib и прочее без SKILL.md — не скилл
+    _name="$(basename "$_d")"
+    _skill_names+=("$_name")
+done
+if [[ ${#_skill_names[@]} -eq 0 ]]; then
     echo "error: не найдено ни одного SKILL.md в $SKILLS_DIR" >&2
     exit 1
 fi
+# Сортируем и склеиваем через ", " (один разделитель, не цикл из paste -d).
+IFS=$'\n' _skill_names=($(printf '%s\n' "${_skill_names[@]}" | sort)); unset IFS
+skill_list="$(printf '%s, ' "${_skill_names[@]}")"
+skill_list="${skill_list%, }"   # убрать хвостовую «, »
 
 # Жёсткий системный промпт. Цель: модель отвечает ровно одной строкой,
 # содержащей "SKILL: <name>" или "SKILL: none". Парсим эту строку из
