@@ -59,7 +59,7 @@ allowed-tools: Bash, Read, Write
 
 | Параметр | Required | Default | Описание |
 |---|---|---|---|
-| `SERVER_ALIAS` | да | — | Имя сервера для menager паролей |
+| `SERVER_ALIAS` | да | — | Имя сервера для менеджера паролей |
 | `PANEL_DOMAIN`, `PANEL_PORT`, `WEB_BASE_PATH` | да | из `vpn.*` в config | Параметры панели |
 | `ADMIN_LOGIN`, `PASSWORD_REF` | да | автодетект | Креды панели |
 | `INBOUND_ID` | да | — | ID inbound, из которого брать клиента |
@@ -74,9 +74,9 @@ allowed-tools: Bash, Read, Write
 
 ## Шаг 0a: Чтение конфига (STRICT)
 
-Скилл — STRICT-режим: без `sysadmin-config.json` он не запускается. Нужны
-`vpn.panel_url` и `vpn.panel_web_base_path`, чтобы знать, к какой панели
-обращаться за данными клиента, и `secrets.manager` для доступа к кредам.
+Скилл — STRICT-режим: без конфига инфры (`infra-config.json`) он не запускается. Нужны
+`vpn.panel_url` и `vpn.panel_web_base_path` (из `infra-config.json`, секция vpn), чтобы знать, к какой панели
+обращаться за данными клиента, и `secrets.manager` (из `agent-config.json` — мозг) для доступа к кредам.
 Эта проверка выполняется **до** Шага 0 (Pre-check qrencode/панели).
 
 Используй общий helper `_lib/find-config.sh` (единая точка изменения для всех

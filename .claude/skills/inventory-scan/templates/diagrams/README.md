@@ -9,13 +9,13 @@
 | `topology.mmd` | Высокоуровневая карта: VPS → группы сервисов → связи с внешним миром | `server.md`, `services.md`, `domains.md` |
 | `services-network.mmd` | Docker-сети, какие контейнеры в каких сетях, порты | `networks.md`, `services.md` |
 | `domains-routing.mmd` | Маршрутизация HTTPS: домен → nginx vhost → upstream-контейнер | `domains.md`, nginx-конфиги из snapshot |
-| `vpn-architecture.mmd` | VPN-инфра: 3X-UI inbound/outbound/routing, server-proxy, клиенты | `sysadmin-config.json` секция vpn, `services.md`, `networks.md` |
+| `vpn-architecture.mmd` | VPN-инфра: 3X-UI inbound/outbound/routing, server-proxy, клиенты | `infra-config.json` секция vpn, `services.md`, `networks.md` |
 | `automations.mmd` | Что работает само: триггеры (cron/timer/watcher/manual) → автоматизации → что трогают (БД/сервисы/внешние API) | `automations.md` (колонка `touches`), `cron.md`, `host-scripts.md`, `systemd-timers.txt`, `watchers.txt` |
 
 ## Когда какая диаграмма генерируется
 
 - `topology.mmd`, `services-network.mmd`, `domains-routing.mmd` — **всегда**, если в `inventory/hosts/` есть хотя бы один сервер.
-- `vpn-architecture.mmd` — **только если** `vpn.enabled: true` в `sysadmin-config.json`. Иначе пропускается.
+- `vpn-architecture.mmd` — **только если** `vpn.enabled: true` в `infra-config.json`. Иначе пропускается.
 - `automations.mmd` — **только если** на сервере есть хоть одна автоматизация (непустой `automations.md`). Иначе пропускается / удаляется (как `vpn-architecture.mmd`). Группа `automations` в `topology.mmd` появляется по тому же условию.
 
 ## Правила оформления (для будущих диаграмм)

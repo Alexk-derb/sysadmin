@@ -43,7 +43,7 @@ allowed-tools: Bash, Read, Edit, Write
 
 # Шаг 0: Чтение конфига (STRICT)
 
-Скилл — STRICT-режим: без `sysadmin-config.json` он не запускается. Конфиг определяет, что именно ставить (стек, домен, Telegram), и явно фиксирует «оператор хочет мониторинг». Без этого решения скилл угадывал бы намерения — это запрещено правилами агента.
+Скилл — STRICT-режим: без конфига инфры (`infra-config.json`) он не запускается. Конфиг определяет, что именно ставить (стек, домен, Telegram), и явно фиксирует «оператор хочет мониторинг». Без этого решения скилл угадывал бы намерения — это запрещено правилами агента.
 
 Используй общий helper `_lib/find-config.sh` (единая точка изменения для всех
 STRICT/OPTIONAL скиллов — алгоритм идентичен Cold Start Protocol персоны).
@@ -59,7 +59,7 @@ find_sysadmin_config strict
 MON_ENABLED=$(get_config_field monitoring.enabled false)
 if [ "$MON_ENABLED" != "true" ]; then
     cat <<'EOF' >&2
-В sysadmin-config.json указано monitoring.enabled=false — мониторинг не нужен.
+В infra-config.json указано monitoring.enabled=false — мониторинг не нужен.
 
 Если хочешь включить — запусти /sysadmin-init --reconfigure
 и переключи monitoring.enabled на true. После этого скилл заработает.
@@ -91,10 +91,10 @@ DOMAIN="${DOMAIN:-$DOMAIN_FROM_CONFIG}"
 
 | Параметр | Default | Описание |
 |----------|---------|----------|
-| `COMPONENTS` | (из `sysadmin-config.json`: `monitoring.stack`) | Комбинация компонентов через запятую |
-| `DOMAIN` | (из `sysadmin-config.json`: `monitoring.panel_domain`) | Базовый домен (для panel.$DOMAIN) |
+| `COMPONENTS` | (из `infra-config.json`: `monitoring.stack`) | Комбинация компонентов через запятую |
+| `DOMAIN` | (из `infra-config.json`: `monitoring.panel_domain`) | Базовый домен (для panel.$DOMAIN) |
 | `TELEGRAM_BOT_TOKEN` | (если telegram; читается из менеджера паролей оператора по `secrets.manager` + конвенции) | Bot token из BotFather |
-| `TELEGRAM_CHAT_ID` | (из `sysadmin-config.json`: `notifications.telegram.*` + менеджер паролей) | Chat ID куда слать алерты |
+| `TELEGRAM_CHAT_ID` | (из `infra-config.json`: `notifications.telegram.*` + менеджер паролей) | Chat ID куда слать алерты |
 | `BASIC_AUTH_USER` | (required) | Имя пользователя для panel-доступа |
 | `BASIC_AUTH_PASS` | (required, из менеджера паролей) | Пароль для panel-доступа |
 | `INSTALL_DIR` | `/opt/monitoring` | Куда разворачивать compose |
@@ -288,7 +288,7 @@ done
 
 # Failed Attempts (граблекейс)
 
-- **«Запуск без `sysadmin-config.json`»** — раньше скилл требовал кучу CLI-параметров,
+- **«Запуск без конфига инфры (`infra-config.json`)»** — раньше скилл требовал кучу CLI-параметров,
   оператор путался какие обязательные. Урок: скилл не угадывает намерения. Нет конфига —
   `exit 1` с указанием на `/sysadmin-init`. `monitoring.enabled=false` — `exit 0` с
   указанием на `/sysadmin-init --reconfigure`. Никаких defaults «как у Василия».

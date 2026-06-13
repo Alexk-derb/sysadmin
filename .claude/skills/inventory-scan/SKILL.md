@@ -182,7 +182,7 @@ fi
 1. **`topology.mmd`** — высокоуровневая карта. Источник: `services.md` (группы), `domains.md` (внешние домены), `server.md` (имя хоста, провайдер, IP). Группа `automations` появляется **только при непустом `automations.md`** — показываю факт наличия + 1-2 ключевые связи (например, pipeline → Postgres, pipeline → Telegram), без детализации триггеров (детали — в `automations.mmd`).
 2. **`services-network.mmd`** — Docker-сети + контейнеры + порты. Источник: `networks.md` + `services.md` (колонки «Порт» и «Сеть»).
 3. **`domains-routing.mmd`** — домен → nginx → upstream. Источник: `domains.md` + nginx-конфиги из snapshot (`nginx-sites.txt`).
-4. **`vpn-architecture.mmd`** — **только если** `vpn.enabled: true` в `sysadmin-config.json`. Иначе удалить файл из `diagrams/` (если был от прошлого запуска). Источник: `sysadmin-config.json` секция vpn + `services.md` (3x-ui контейнер) + `networks.md` (mixed inbound если есть).
+4. **`vpn-architecture.mmd`** — **только если** `vpn.enabled: true` в `infra-config.json`. Иначе удалить файл из `diagrams/` (если был от прошлого запуска). Источник: `infra-config.json` секция vpn + `services.md` (3x-ui контейнер) + `networks.md` (mixed inbound если есть).
 5. **`automations.mmd`** — **только если** на сервере есть хоть одна автоматизация (непустой `automations.md`). Иначе удалить файл из `diagrams/` (если был от прошлого запуска) — по образцу `vpn-architecture.mmd`. Показывает три колонки: триггеры (cron/timer/watcher/manual) → автоматизации → что трогают (БД/сервисы/внешние API). Пунктир `-.запускает.->` от триггера к автоматизации, сплошная `-->` к тому, что трогает. Источник: `automations.md` (колонка `touches` даёт связи) + `cron.md` + `host-scripts.md` + `systemd-timers.txt` + `watchers.txt`.
 
 **Правила:**

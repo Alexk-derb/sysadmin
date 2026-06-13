@@ -34,7 +34,7 @@ self-loop, на котором ломается панель 3X-UI без пра
 Предполагается:
 - 3X-UI установлен и работает (через `/setup-vpn-panel`).
 - На панели уже есть outbound с VPN-сервером (через `/configure-vpn-routing`).
-- В `sysadmin-config.json` секция `vpn` с `panel_url`, `panel_web_base_path`,
+- В `infra-config.json` секция `vpn` с `panel_url`, `panel_web_base_path`,
   `upstream_kind` ≠ `none`.
 - Креды панели в менеджере паролей под `3xui-panel-${SERVER_ALIAS}`.
 - ssh доступен из cwd (через SSH-alias или host).
@@ -65,7 +65,7 @@ self-loop, на котором ломается панель 3X-UI без пра
   с `socks5h://127.0.0.1:1080`.
 - Smoke check: `curl https://api.anthropic.com` через свежий SSH → HTTP/2;
   `curl https://ya.ru` → HTTP/2; панель 3X-UI открывается в браузере.
-- `sysadmin-config.json` обновлён: `vpn.server_proxy_enabled=true`.
+- `infra-config.json` обновлён: `vpn.server_proxy_enabled=true`.
 - Inventory обновлён: блок про server proxy в `networks.md`.
 </goals>
 
@@ -84,7 +84,7 @@ self-loop, на котором ломается панель 3X-UI без пра
 
 ## Шаг 0a: Чтение конфига (STRICT)
 
-Скилл — STRICT-режим: без `sysadmin-config.json` он не запускается. Серверный
+Скилл — STRICT-режим: без конфига инфры (`infra-config.json`) он не запускается. Серверный
 прокси работает поверх существующей VPN-инфраструктуры — нужны `vpn.panel_url`,
 `vpn.panel_web_base_path` и `vpn.upstream_kind ≠ none`. Эта проверка
 выполняется **до** запуска `scripts/00-detect-existing.sh`.
@@ -314,7 +314,7 @@ Inventory (`networks.md`):
 - **Применение**: бот, скрипты, pip/npm/curl/git через HTTPS_PROXY env
 ```
 
-Config (`sysadmin-config.json`):
+Config (`infra-config.json`):
 
 ```jsonc
 "vpn": {

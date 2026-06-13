@@ -37,8 +37,8 @@ allowed-tools: Bash, Read
 <parameters>
 - `SCOPE` — `host` / `docker` / `git` / `tls` / `all` (default: `all`).
 - `OUTPUT_FORMAT` — `markdown` / `json` (default: `markdown`).
-- `SERVER` — SSH-target (если не задан CLI — берётся из `sysadmin-config.json`: `servers[0].ssh_alias`).
-- `REPORT_LANGUAGE` — `ru` / `en` (если не задан CLI — берётся из `sysadmin-config.json`: `language`; default: `ru`).
+- `SERVER` — SSH-target (если не задан CLI — берётся из `infra-config.json`: `servers[0].ssh_alias`).
+- `REPORT_LANGUAGE` — `ru` / `en` (если не задан CLI — берётся из `agent-config.json`: `language`; default: `ru`).
 </parameters>
 
 # Инструкции
@@ -245,7 +245,7 @@ git (`git filter-repo`).
 
 ## Failed Attempts
 
-- **«Запуск без `sysadmin-config.json` без предупреждения»** — отчёт уезжает на defaults (язык=ru, нет ssh-алиаса, рекомендации по `.env` без привязки к менеджеру), оператор не понимает, почему рекомендации общие. Урок: при отсутствии конфига выводить WARN в stderr с указанием на `/sysadmin-init`. Скилл остаётся read-only и НЕ падает — degraded gracefully.
+- **«Запуск без конфигов (`agent-config.json` / `infra-config.json`) без предупреждения»** — отчёт уезжает на defaults (язык=ru, нет ssh-алиаса, рекомендации по `.env` без привязки к менеджеру), оператор не понимает, почему рекомендации общие. Урок: при отсутствии конфига выводить WARN в stderr с указанием на `/sysadmin-init`. Скилл остаётся read-only и НЕ падает — degraded gracefully.
 - **«gitleaks scan только working tree»** — пропускает исторические утечки.
   **Решение:** `--log-opts='--all'` для полной истории.
 - **«Чек портов через netstat».** Утилита устарела, на новых Ubuntu может не

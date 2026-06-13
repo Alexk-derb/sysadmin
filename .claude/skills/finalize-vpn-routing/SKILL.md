@@ -36,7 +36,7 @@ allowed-tools: Bash, Read, Edit, Write
 <context>
 Предполагается:
 - 3X-UI установлен (через `/setup-vpn-panel`), панель отвечает по HTTPS.
-- В `sysadmin-config.json` секция `vpn.*` с `panel_url`, `panel_web_base_path`.
+- В `infra-config.json` секция `vpn.*` с `panel_url`, `panel_web_base_path`.
 - Креды панели в менеджере паролей под `3xui-panel-${SERVER_ALIAS}`.
 - Настройка маршрутизации НАЧАТА (возможно частично/с ошибками) — это и есть
   типичный вход. Если ничего не начато — скилл это увидит и проведёт настройку

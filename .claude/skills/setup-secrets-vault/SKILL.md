@@ -41,7 +41,7 @@ allowed-tools: Bash, Read, Edit, Write
 | Параметр        | Default      | Описание                                                          |
 | --------------- | ------------ | ----------------------------------------------------------------- |
 | `OS`            | autodetect   | `macos` / `linux-headless` / `linux-desktop` / `windows`           |
-| `VAULT_TYPE`    | (interactive; если есть `sysadmin-config.json` — берётся из `secrets.manager`) | `keychain` / `pass` / `keepassxc` / `bitwarden` / `1password` / `other` |
+| `VAULT_TYPE`    | (interactive; если есть `agent-config.json` — берётся из `secrets.manager`) | `keychain` / `pass` / `keepassxc` / `bitwarden` / `1password` / `other` |
 | `INVENTORY_DIR` | `inventory`  | Куда положить `access.md`                                         |
 | `PROJECT_ROOT`  | `$PWD`       | Корень проекта (где лежит `.git/`)                                |
 | `--force`       | (off)        | Игнорировать значение `secrets.manager` из конфига и перейти в Decision Tree |
@@ -73,7 +73,7 @@ esac
 
 Если что-то уже стоит — спросить оператора: «использовать существующий или поставить новый?»
 
-## Шаг 2.0: Проверка sysadmin-config.json (OPTIONAL)
+## Шаг 2.0: Проверка agent-config.json (OPTIONAL)
 
 Скилл — OPTIONAL-режим. Может вызываться **до** `/sysadmin-init` (на свежем сервере, в составе bootstrap-сценария), поэтому отсутствие конфига — нормально.
 
@@ -113,7 +113,7 @@ fi
 ```
 
 **Логика:**
-- Если `sysadmin-config.json` есть и `secrets.manager` задан → использовать значение, пропустить Decision Tree (Шаг 2).
+- Если `agent-config.json` есть и `secrets.manager` задан → использовать значение, пропустить Decision Tree (Шаг 2).
 - Если конфига нет ИЛИ `secrets.manager` не задан → выполнять Decision Tree как раньше (этот скилл может вызываться **до** `/sysadmin-init`, поэтому отсутствие конфига — норма, а не ошибка).
 - Если оператор хочет переопределить значение из конфига — флаг `--force` или `/sysadmin-init --reconfigure`.
 
@@ -236,7 +236,7 @@ bw delete item $(bw get item infra-smoke-test | jq -r .id)
 
 # Failed Attempts (граблекейс)
 
-- **«Игнорировал `sysadmin-config.json` и спрашивал заново»** — оператор настраивал второй менеджер поверх первого. Урок: если `secrets.manager` задан в конфиге, Decision Tree пропускается. Переопределить можно `--force` или `/sysadmin-init --reconfigure`. Сохраняется совместимость со свежим сервером (конфига нет → Decision Tree как раньше).
+- **«Игнорировал `agent-config.json` и спрашивал заново»** — оператор настраивал второй менеджер поверх первого. Урок: если `secrets.manager` задан в конфиге, Decision Tree пропускается. Переопределить можно `--force` или `/sysadmin-init --reconfigure`. Сохраняется совместимость со свежим сервером (конфига нет → Decision Tree как раньше).
 - **«Bitwarden CLI без серверной части»** — `bw login` требует bitwarden.com или self-hosted vaultwarden. Если оператор хочет полностью offline — это другой инструмент (pass / KeePassXC).
 - **«pass без gpg-key»** — `pass init` требует gpg-key. Скрипт `install-pass.sh` детектит отсутствие ключа и помогает создать. Если ключ уже есть — спрашивает, какой использовать.
 - **«Keychain на Apple Silicon работает иначе»** — миф. CLI `security` идентичен на Intel и Apple Silicon. Разница только в одном — на M-чипах FileVault включён по умолчанию (что хорошо).

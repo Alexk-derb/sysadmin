@@ -150,7 +150,7 @@ if [ -n "${INFRA_DIR:-}" ]; then
     DEST_DIR="${INFRA_DIR%/}/inventory/shared/vpn-subscriptions"
 else
     echo "WARN: INFRA_DIR не задан — сохраняю рядом (./). Для постоянного хранения" >&2
-    echo "      укажи infrastructure.root_path в sysadmin-config.json." >&2
+    echo "      настрой проект через /sysadmin-init (путь к инфре — projects[].infra_root в agent-config.json)." >&2
     DEST_DIR="."
 fi
 mkdir -p "$DEST_DIR"

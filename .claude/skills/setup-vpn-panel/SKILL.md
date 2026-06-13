@@ -30,7 +30,7 @@ allowed-tools: Bash, Read, Edit, Write
 Предполагается:
 - Свежий VPS или сервер, прошедший `/bootstrap-new-server` (есть UFW, SSH работает по ключу, без панели VPN).
 - DNS: A-запись для DOMAIN указывает на IP сервера, распространение завершилось (`dig +short DOMAIN == server IP`).
-- В `sysadmin-config.json` есть `secrets.manager` (keychain / pass / bw / op).
+- В `agent-config.json` есть `secrets.manager` (keychain / pass / bw / op).
 - Для `TLS_METHOD=acme-webroot` (дефолт): на сервере **установлен и запущен nginx** — этот метод не работает без работающего nginx.
 - Для `TLS_METHOD=acme-standalone` (fallback): порт 80 свободен (acme сам займёт его на время выпуска).
 - Целевая версия 3X-UI — эталонная `MHSanaei/3x-ui`, не форк.
@@ -52,7 +52,7 @@ allowed-tools: Bash, Read, Edit, Write
   При `LOCATION=foreign-server` — 443/tcp открыт для будущего VLESS+Reality inbound.
 - Креды в менеджере паролей под именем `3xui-panel-${SERVER_ALIAS}` (URL, логин, пароль, notes).
 - Inventory обновлён: блок про 3X-UI в `$INFRA/inventory/hosts/$SERVER/services.md`.
-- В `sysadmin-config.json` обновлены поля `vpn.enabled=true`, `vpn.panel_url`, `vpn.panel_web_base_path`, `vpn.server_role` (= `$LOCATION`).
+- В `infra-config.json` обновлены поля `vpn.enabled=true`, `vpn.panel_url`, `vpn.panel_web_base_path`, `vpn.server_role` (= `$LOCATION`).
 </goals>
 
 # Параметры
@@ -60,7 +60,7 @@ allowed-tools: Bash, Read, Edit, Write
 | Параметр | Required | Default | Описание |
 |---|---|---|---|
 | `SSH_TARGET` | да | — | SSH-цель: alias из `~/.ssh/config` или `user@host` |
-| `SERVER_ALIAS` | да | — | Короткое имя сервера для inventory и menager паролей (например, `vpn-de` или `prod`) |
+| `SERVER_ALIAS` | да | — | Короткое имя сервера для inventory и менеджера паролей (например, `vpn-de` или `prod`) |
 | `DOMAIN` | да | — | Домен с действующей A-записью на IP сервера. Для HTTPS-сертификата. |
 | `LOCATION` | нет | `ask` | `ru-server` / `foreign-server` / `ask`. Влияет на дальнейшую настройку (важно: только при `foreign-server` готовится 443/tcp под VLESS+Reality). |
 | `VERSION` | нет | `v3.0.2` | Версия 3X-UI. Фиксированная для повторяемости. См. https://github.com/MHSanaei/3x-ui/releases |
@@ -77,8 +77,9 @@ allowed-tools: Bash, Read, Edit, Write
 
 ## Шаг 0a: Чтение конфига (STRICT)
 
-Скилл — STRICT-режим: без `sysadmin-config.json` он не запускается. Конфиг
-содержит `secrets.manager` (куда записать креды панели) и серверы — без них
+Скилл — STRICT-режим: без конфига инфры (`infra-config.json`) он не запускается.
+Конфиг содержит серверы и блок `vpn`, а `secrets.manager` (куда записать креды
+панели) берётся из мозга (`agent-config.json`) — без них
 скилл угадывал бы намерения. Эта проверка выполняется **до** запуска
 `scripts/01-preflight.sh`, чтобы при отсутствии конфига оператор получил
 понятную ошибку, а не падение на середине процедуры.
@@ -328,7 +329,7 @@ HTTP/2 200, валидный TLS-сертификат.
 ## Шаг 6: Запись секретов в менеджер паролей
 
 Скрипт `scripts/05-record-secrets.sh` использует `api_store_secret()` из
-`scripts/lib-api/3xui.sh`. Параметры берутся из `sysadmin-config.json`
+`scripts/lib-api/3xui.sh`. Параметры берутся из `agent-config.json`
 (поле `secrets.manager`).
 
 Запись имеет вид:
@@ -363,7 +364,7 @@ Inventory:
 - **Inbound/outbound**: не настроены (см. `/configure-vpn-routing`)
 ```
 
-`sysadmin-config.json` обновляется:
+`infra-config.json` обновляется:
 
 ```jsonc
 "vpn": {

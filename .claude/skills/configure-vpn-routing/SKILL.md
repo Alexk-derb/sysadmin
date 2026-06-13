@@ -34,7 +34,7 @@ inbound для клиентов, outbound (через подписку пров�
 <context>
 Предполагается:
 - 3X-UI установлен (через `/setup-vpn-panel`), панель отвечает по HTTPS.
-- В `sysadmin-config.json` секция `vpn` с `panel_url`, `panel_web_base_path`.
+- В `infra-config.json` секция `vpn` с `panel_url`, `panel_web_base_path`.
 - Креды панели в менеджере паролей оператора под именем `3xui-panel-${SERVER_ALIAS}`.
 - Для `OUTBOUND_KIND=subscription` — оператор передал подписной URL или
   прямой vless://-link от провайдера.
@@ -73,16 +73,16 @@ inbound для клиентов, outbound (через подписку пров�
 - Клиенты добавлены (минимум 1 — создаётся вместе с inbound).
 - Xray перезапущен, изменения активны.
 - Inventory обновлён: блок про routing/clients в `networks.md`.
-- `sysadmin-config.json` обновлён: `vpn.upstream_kind` соответствует выбору.
+- `infra-config.json` обновлён: `vpn.upstream_kind` соответствует выбору.
 </goals>
 
 # Параметры
 
 | Параметр | Required | Default | Описание |
 |---|---|---|---|
-| `SERVER_ALIAS` | да | — | Имя сервера для menager паролей и inventory |
+| `SERVER_ALIAS` | да | — | Имя сервера для менеджера паролей и inventory |
 | `PANEL_DOMAIN`, `PANEL_PORT`, `WEB_BASE_PATH` | да | из `vpn.*` в config | Параметры панели |
-| `ADMIN_LOGIN`, `PASSWORD_REF` | да | автодетект из menager | Креды панели |
+| `ADMIN_LOGIN`, `PASSWORD_REF` | да | автодетект из менеджера | Креды панели |
 | `OUTBOUND_KIND` | нет | `ask` | `subscription` / `self-foreign` / `mixed` / `ask` |
 | `SUBSCRIPTION_URL` | условно | — | Для `OUTBOUND_KIND=subscription`. Если сервера ещё не извлечены — сначала `/extract-subscription-servers` |
 | `PROVIDER_SLUG` | нет | `subscription` | Короткое имя провайдера для файла в infra (`blanc`, `nurvpn`, `panterra`). Совпадает с тем, под которым сохранил `/extract-subscription-servers` |
@@ -104,7 +104,7 @@ inbound для клиентов, outbound (через подписку пров�
 
 ## Шаг 0a: Чтение конфига (STRICT)
 
-Скилл — STRICT-режим: без `sysadmin-config.json` он не запускается. Конфиг
+Скилл — STRICT-режим: без конфига инфры (`infra-config.json`) он не запускается. Конфиг
 обязан содержать секцию `vpn.*` с `panel_url` и `panel_web_base_path` —
 без них непонятно, к какой панели обращаться, и кредам в менеджере паролей
 неоткуда взяться. Эта проверка выполняется **до** Шага 0 (Pre-check).
@@ -199,16 +199,16 @@ fi
    в свободный интернет, при этом РФ-трафик идёт напрямую (быстрее, и РФ-сайт
    видит российский IP — не банит как VPN-юзера), а реклама режется.
 3. **ЧТО ПРОИЗОЙДЁТ**: ~30-60 секунд изменений через API + restart Xray
-   (1-2 секунды simulationperia, не рвёт активные TCP-сессии).
+   (1-2 секунды простоя, не рвёт активные TCP-сессии).
 4. **ЧТО ПРОВЕРИЛ**: пре-чек прошёл, ссылки распарсились корректно.
 5. **РИСК + ОТКАТ**: если что-то пойдёт не так — восстановление xray-конфига
    из бэкапа (`api_get_xray_config` сохраняется до изменений).
 6. **СТРАХОВКА**: после изменений — `list_inbounds` для проверки + ручной
    smoke check (подключение клиента и `curl -I https://2ip.ru`).
 
-## Шаг 3: Получение пароля из menager
+## Шаг 3: Получение пароля из менеджера
 
-Скилл вычисляет `PASSWORD_REF` исходя из `sysadmin-config.json` (`secrets.manager`)
+Скилл вычисляет `PASSWORD_REF` исходя из `agent-config.json` (`secrets.manager`)
 и `SERVER_ALIAS`:
 
 ```
@@ -500,7 +500,7 @@ Inventory:
 - Остальное → balancer (или единственный upstream)
 ```
 
-`sysadmin-config.json` — `vpn.upstream_kind` обновляется (`subscription` /
+`infra-config.json` — `vpn.upstream_kind` обновляется (`subscription` /
 `self-foreign` / `mixed`).
 
 ## Шаг 10: Финальный отчёт

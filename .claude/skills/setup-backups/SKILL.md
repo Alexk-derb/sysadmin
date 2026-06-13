@@ -46,7 +46,7 @@ allowed-tools: Bash, Read, Edit, Write
 
 # Шаг 0: Чтение конфига (STRICT)
 
-Скилл — STRICT-режим: без `sysadmin-config.json` он не запускается. Конфиг определяет, куда складываются бэкапы (S3 / B2 / WebDAV), какая retention, нужны ли Telegram-алерты и в каком менеджере паролей искать `restic`-passphrase. Без этих решений скилл угадывал бы намерения — это запрещено правилами агента.
+Скилл — STRICT-режим: без конфига инфры (`infra-config.json`) он не запускается. Конфиг определяет, куда складываются бэкапы (S3 / B2 / WebDAV), какая retention, нужны ли Telegram-алерты и в каком менеджере паролей искать `restic`-passphrase. Без этих решений скилл угадывал бы намерения — это запрещено правилами агента.
 
 Используй общий helper `_lib/find-config.sh` (единая точка изменения для всех
 STRICT/OPTIONAL скиллов — алгоритм идентичен Cold Start Protocol персоны).
@@ -73,7 +73,7 @@ get_agent_field() {  # $1=jq-путь, $2=default (путь одинаков в 
 BAK_ENABLED=$(get_config_field backups.enabled false)
 if [ "$BAK_ENABLED" != "true" ]; then
     cat <<'EOF' >&2
-В sysadmin-config.json указано backups.enabled=false — бэкапы не настраиваются.
+В infra-config.json указано backups.enabled=false — бэкапы не настраиваются.
 
 Если хочешь включить — запусти /sysadmin-init --reconfigure
 и переключи backups.enabled на true. После этого скилл заработает.
@@ -120,16 +120,16 @@ BACKUP_PASS_REF="${BACKUP_PASS_REF:-$BACKUP_PASS_REF_FROM_CONFIG}"
 
 | Параметр | Default | Описание |
 |----------|---------|----------|
-| `BACKUP_DESTINATION` | (из `sysadmin-config.json`: `backups.destination`) | `s3` / `b2` / `yandex-disk-webdav` / `nextcloud-webdav` / `owncloud-webdav` / `local` |
-| `RCLONE_REMOTE` | (из `sysadmin-config.json`: `backups.rclone_remote` — для webdav) | Имя rclone-remote из `~/.config/rclone/rclone.conf` |
+| `BACKUP_DESTINATION` | (из `infra-config.json`: `backups.destination`) | `s3` / `b2` / `yandex-disk-webdav` / `nextcloud-webdav` / `owncloud-webdav` / `local` |
+| `RCLONE_REMOTE` | (из `infra-config.json`: `backups.rclone_remote` — для webdav) | Имя rclone-remote из `~/.config/rclone/rclone.conf` |
 | `BACKUP_USER` | (required для webdav) | WebDAV username (берётся из менеджера паролей при выполнении) |
-| `BACKUP_PASS_REF` | (из `sysadmin-config.json`: `secrets.manager` + конвенция индекса) | Ссылка на passphrase в менеджере паролей |
+| `BACKUP_PASS_REF` | (из `agent-config.json`: `secrets.manager` + конвенция индекса) | Ссылка на passphrase в менеджере паролей |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | (required для s3, из менеджера паролей) | S3 credentials |
 | `DATABASES` | (autodetect) | Список БД-контейнеров через запятую |
-| `RETENTION_DAYS` | (из `sysadmin-config.json`: `backups.retention.daily`) | Daily snapshots |
-| `RETENTION_WEEKS` | (из `sysadmin-config.json`: `backups.retention.weekly`) | Weekly snapshots |
-| `RETENTION_MONTHS` | (из `sysadmin-config.json`: `backups.retention.monthly`) | Monthly snapshots |
-| `ALERT_CHANNEL` | (из `sysadmin-config.json`: `notifications.telegram.enabled` → `telegram`) | `telegram` / `slack` / `email` — какой канал использовать |
+| `RETENTION_DAYS` | (из `infra-config.json`: `backups.retention.daily`) | Daily snapshots |
+| `RETENTION_WEEKS` | (из `infra-config.json`: `backups.retention.weekly`) | Weekly snapshots |
+| `RETENTION_MONTHS` | (из `infra-config.json`: `backups.retention.monthly`) | Monthly snapshots |
+| `ALERT_CHANNEL` | (из `infra-config.json`: `notifications.telegram.enabled` → `telegram`) | `telegram` / `slack` / `email` — какой канал использовать |
 | `ALERT_TOKEN` | (optional, из менеджера паролей) | Токен/webhook (Telegram bot token, Slack incoming webhook URL, SMTP credentials ref) |
 | `ALERT_TARGET` | (optional) | Получатель (Telegram chat_id, Slack channel, email address) |
 | `BACKUP_DIR` | `/opt/backups/dbs` | Локальная директория промежуточных дампов |
@@ -301,7 +301,7 @@ docker rm -f pg-restore-test
 
 # Failed Attempts (граблекейс)
 
-- **«Запуск без `sysadmin-config.json`»** — раньше скилл требовал кучу CLI-параметров,
+- **«Запуск без конфига инфры (`infra-config.json`)»** — раньше скилл требовал кучу CLI-параметров,
   оператор вспоминал какие обязательные. Урок: скилл не угадывает намерения. Нет конфига —
   `exit 1` с указанием на `/sysadmin-init`. `backups.enabled=false` — `exit 0` с
   указанием на `/sysadmin-init --reconfigure`. Никаких defaults «как у меня».

@@ -4,7 +4,7 @@
 # Использует api_store_secret() из scripts/lib-api/3xui.sh.
 #
 # Вход через ENV:
-#   MANAGER           — keychain | pass | bw | op (из sysadmin-config.json)
+#   MANAGER           — keychain | pass | bw | op (secrets.manager из agent-config.json)
 #   SERVER_ALIAS      — alias сервера (для имени записи)
 #   DOMAIN            — домен панели
 #   PANEL_PORT        — порт панели
