@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # .githooks/pre-commit — версионируемый pre-commit hook репо sysadmin.
 #
-# ЗАЧЕМ. Персона агента двухслойна (ядро CLAUDE.md ↔ references/*.md; ADR-0015).
-# Рассинхрон между слоями = неправильное/пропущенное действие агента на старте
-# (реальные инциденты v1.9.1–v1.9.3). Этот хук НЕ ДАЁТ закоммитить персону с
-# рассинхроном: если в индексе есть правки персоны — прогоняет линтер
-# check-persona-sync.sh и блокирует коммит при FAIL. Правило — CLAUDE.md
-# «персона двухслойна».
+# ЗАЧЕМ. Две независимые проверки целостности перед коммитом:
+#  1) ПЕРСОНА (CLAUDE.md ↔ references/*.md; ADR-0015) — рассинхрон слоёв = неправильное
+#     действие агента на старте (инциденты v1.9.1–v1.9.3). + бюджет ядра CLAUDE.md (ADR-0016).
+#  2) ЗНАНИЯ (.claude/knowledge/) — целостность базы: валидный frontmatter (иначе файл
+#     невидим для контроля свежести), битые путевые ссылки, сироты (ADR-0003/0006).
 #
 # Хук версионируется (лежит в репо), активируется один раз:
 #   git config core.hooksPath .githooks
@@ -16,62 +15,77 @@
 
 set -u
 
-# --- корень репо -----------------------------------------------------------
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-LINTER="$ROOT/.claude/skills/_lib/check-persona-sync.sh"
-
-# --- трогает ли этот коммит персону? --------------------------------------
-# Смотрим staged-файлы. Линтер нужен, только если меняются выжимка или references.
 STAGED="$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null)"
+FAIL=0
 
+# ===========================================================================
+# 1. ПЕРСОНА — бюджет ядра + синхрон слоёв (только если коммит трогает персону)
+# ===========================================================================
 PERSONA_TOUCHED=0
-case "$STAGED" in
-    *"CLAUDE.md"*)                             PERSONA_TOUCHED=1 ;;  # ядро (ADR-0015)
-esac
-case "$STAGED" in
-    *".claude/agents/sysadmin.md"*)            PERSONA_TOUCHED=1 ;;  # legacy/заглушка
-esac
-case "$STAGED" in
-    *".claude/agents/references/"*)            PERSONA_TOUCHED=1 ;;
-esac
+case "$STAGED" in *"CLAUDE.md"*)                  PERSONA_TOUCHED=1 ;; esac  # ядро (ADR-0015)
+case "$STAGED" in *".claude/agents/sysadmin.md"*) PERSONA_TOUCHED=1 ;; esac  # legacy/заглушка
+case "$STAGED" in *".claude/agents/references/"*) PERSONA_TOUCHED=1 ;; esac
 
-if [ "$PERSONA_TOUCHED" -eq 0 ]; then
-    exit 0   # персону не трогали — хук молча пропускает коммит
-fi
-
-# --- бюджет ядра CLAUDE.md (ADR-0016, анти-храповик) -----------------------
-# Ядро грузится при КАЖДОМ старте — раздувание бьёт по контексту. Бюджет в байтах
-# (wc -c, детерминированно при кириллице). Поднять бюджет — только осознанным ADR.
-CLAUDE_BUDGET_BYTES=42000
-CLAUDEMD="$ROOT/CLAUDE.md"
-case "$STAGED" in
-    *"CLAUDE.md"*)
-        if [ -f "$CLAUDEMD" ]; then
-            BYTES="$(wc -c < "$CLAUDEMD" | tr -d ' ')"
-            if [ "$BYTES" -gt "$CLAUDE_BUDGET_BYTES" ]; then
-                echo "❌ pre-commit ЗАБЛОКИРОВАН: CLAUDE.md = ${BYTES} Б > бюджет ${CLAUDE_BUDGET_BYTES} Б (ADR-0016)." >&2
-                echo "   Ядро грузится при каждом старте. Вынеси часть в references/ («одно входит — одно выходит»)," >&2
-                echo "   либо подними бюджет осознанно через ADR (анти-храповик). Обход (редко): git commit --no-verify" >&2
-                exit 1
+if [ "$PERSONA_TOUCHED" -eq 1 ]; then
+    # --- бюджет ядра CLAUDE.md (ADR-0016, анти-храповик) -------------------
+    CLAUDE_BUDGET_BYTES=42000
+    CLAUDEMD="$ROOT/CLAUDE.md"
+    case "$STAGED" in
+        *"CLAUDE.md"*)
+            if [ -f "$CLAUDEMD" ]; then
+                BYTES="$(wc -c < "$CLAUDEMD" | tr -d ' ')"
+                if [ "$BYTES" -gt "$CLAUDE_BUDGET_BYTES" ]; then
+                    echo "❌ pre-commit: CLAUDE.md = ${BYTES} Б > бюджет ${CLAUDE_BUDGET_BYTES} Б (ADR-0016)." >&2
+                    echo "   Ядро грузится при каждом старте. Вынеси часть в references/ («одно входит — одно выходит»)," >&2
+                    echo "   либо подними бюджет осознанно через ADR. Обход (редко): git commit --no-verify" >&2
+                    FAIL=1
+                fi
             fi
+            ;;
+    esac
+
+    # --- линтер согласованности слоёв -------------------------------------
+    LINTER="$ROOT/.claude/skills/_lib/check-persona-sync.sh"
+    if [ ! -f "$LINTER" ]; then
+        echo "⚠️  pre-commit: персона меняется, но линтер не найден ($LINTER) — пропускаю проверку." >&2
+    else
+        echo "pre-commit: коммит трогает персону → проверяю согласованность слоёв…" >&2
+        if ! bash "$LINTER" --root "$ROOT" >&2; then
+            echo >&2
+            echo "❌ pre-commit: персона рассинхронизирована (выжимка ↔ references)." >&2
+            echo "   Синхронизируй ядро CLAUDE.md и references/ (см. CLAUDE.md «персона двухслойна»)." >&2
+            FAIL=1
         fi
-        ;;
-esac
-
-# --- линтер на месте? ------------------------------------------------------
-if [ ! -f "$LINTER" ]; then
-    echo "⚠️  pre-commit: персона меняется, но линтер не найден ($LINTER) — пропускаю проверку." >&2
-    exit 0
+    fi
 fi
 
-# --- прогон линтера --------------------------------------------------------
-echo "pre-commit: коммит трогает персону → проверяю согласованность слоёв…" >&2
-if bash "$LINTER" --root "$ROOT" >&2; then
-    exit 0
-else
+# ===========================================================================
+# 2. ЗНАНИЯ — целостность базы (только если коммит трогает .claude/knowledge/)
+# ===========================================================================
+KNOWLEDGE_TOUCHED=0
+case "$STAGED" in *".claude/knowledge/"*) KNOWLEDGE_TOUCHED=1 ;; esac
+
+if [ "$KNOWLEDGE_TOUCHED" -eq 1 ]; then
+    VALIDATOR="$ROOT/scripts/validate-knowledge.py"
+    if [ ! -f "$VALIDATOR" ]; then
+        echo "⚠️  pre-commit: knowledge меняется, но валидатор не найден ($VALIDATOR) — пропускаю." >&2
+    elif ! command -v python3 >/dev/null 2>&1; then
+        echo "⚠️  pre-commit: python3 не найден — пропускаю валидацию knowledge." >&2
+        echo "   Для строгой проверки целостности базы знаний установи python3 (+ pip install pyyaml)." >&2
+    else
+        echo "pre-commit: коммит трогает knowledge → проверяю целостность базы…" >&2
+        if ! ( cd "$ROOT" && python3 "$VALIDATOR" >&2 ); then
+            echo >&2
+            echo "❌ pre-commit: база знаний не прошла валидацию (frontmatter / битые ссылки)." >&2
+            echo "   Почини по выводу выше. Обход (редко): git commit --no-verify" >&2
+            FAIL=1
+        fi
+    fi
+fi
+
+if [ "$FAIL" -ne 0 ]; then
     echo >&2
-    echo "❌ pre-commit ЗАБЛОКИРОВАН: персона рассинхронизирована (выжимка ↔ references)." >&2
-    echo "   Синхронизируй ядро CLAUDE.md и references/ (см. CLAUDE.md «персона двухслойна»)," >&2
-    echo "   затем повтори коммит. Осознанный обход (редко): git commit --no-verify" >&2
-    exit 1
+    echo "🔴 pre-commit ЗАБЛОКИРОВАН — см. причины выше." >&2
 fi
+exit "$FAIL"

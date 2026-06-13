@@ -406,7 +406,7 @@ NEVER вываливать `internal/DNAT/iptables/socket-proxy` сразу. Э�
   `services-network.mmd` визуализирует §3.
 - Скилл `/install-monitoring-stack` — документированные исключения `network_mode: host`
   для Beszel/Diun (§6).
-- Скилл `/cleanup-existing-server`, `references/typical-grabli.md` §10 — частный случай §5.1.
+- Скилл `/cleanup-existing-server`, `.claude/skills/cleanup-existing-server/references/typical-grabli.md` §10 — частный случай §5.1.
 - Рефлекс **§3.8.7** (персона) — раскладка портов хоста (порт 443).
 - Рефлекс **§3.8.12** (персона) — этот документ; срабатывает при развёртывании нового сервиса
   / подключении контейнера к сети.
