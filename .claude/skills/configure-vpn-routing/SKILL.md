@@ -1,17 +1,13 @@
 ---
 name: configure-vpn-routing
 description: |
-  Настройка VPN-маршрутизации на установленной панели 3X-UI: создание inbound
-  для клиентов (VLESS-TCP для ru-server, VLESS+Reality для foreign-server),
-  outbound через подписку платного провайдера (сервера берутся из уже извлечённого
-  `/extract-subscription-servers` JSON в infra — этот скилл извлечением НЕ занимается;
-  оператор выбирает страну выхода и пресет «одна страна + авто-failover» или «один
-  фиксированный сервер») ИЛИ через свой
-  загр.VPS — оба пути равноправны; balancer leastPing + observatory
-  (probeInterval=5m для стабильного IP) для нескольких outbound, routing rules по
-  модели «золотая середина» (7 правил: private→direct, реклама→block,
-  bittorrent→block, geoip:ru→direct, category-ru+regex→direct, остальное→upstream),
-  массовое добавление клиентов с UUID. Использует REST API панели как основной путь.
+  Настройка VPN-маршрутизации на установленной панели 3X-UI: inbound для клиентов
+  (VLESS-TCP для ru-server, VLESS+Reality для foreign-server), outbound через
+  подписку провайдера (сервера — из уже извлечённого `/extract-subscription-servers`
+  JSON; извлечением сам НЕ занимается; оператор выбирает страну выхода и пресет) ИЛИ
+  через свой загр.VPS; balancer leastPing + observatory (probeInterval=5m, стабильный
+  IP) для нескольких outbound; routing по модели «золотая середина» (7 правил);
+  массовое добавление клиентов с UUID. REST API панели — основной путь.
   Триггеры: «настрой маршрутизацию VPN», «добавь клиента», «настрой VLESS
   на панели», «семье нужен VPN», «outbound через подписку», «вот моя подписка
   настрой выход», «хочу выходить из США/Германии», «мульти-хоп через свой
@@ -104,14 +100,11 @@ inbound для клиентов, outbound (через подписку пров�
 
 ## Шаг 0a: Чтение конфига (STRICT)
 
-Скилл — STRICT-режим: без конфига инфры (`infra-config.json`) он не запускается. Конфиг
-обязан содержать секцию `vpn.*` с `panel_url` и `panel_web_base_path` —
-без них непонятно, к какой панели обращаться, и кредам в менеджере паролей
-неоткуда взяться. Эта проверка выполняется **до** Шага 0 (Pre-check).
-
-Используй общий helper `_lib/find-config.sh` (единая точка изменения для всех
-STRICT/OPTIONAL скиллов — алгоритм идентичен Cold Start Protocol персоны).
-`$SYSADMIN_ROOT` запоминается на Шаге 1 Cold Start.
+Скилл — STRICT-режим: без `infra-config.json` с секцией `vpn.*` (`panel_url`,
+`panel_web_base_path`) не запускается — иначе непонятно, к какой панели обращаться и
+откуда брать креды. Проверка — **до** Шага 0 (Pre-check). Общий helper
+`_lib/find-config.sh` (алгоритм = Cold Start персоны); `$SYSADMIN_ROOT` запомнен
+на Шаге 1 Cold Start.
 
 ```bash
 source "$SYSADMIN_ROOT/.claude/skills/_lib/find-config.sh"
@@ -176,18 +169,11 @@ fi
 
 ## Шаг 1: Архитектурный диалог (если `OUTBOUND_KIND=ask`)
 
-Сеньор-обёртка (раздел 4.3 персоны). См. `references/multi-hop-architectures.md`
-для двух путей.
-
-1. **Контекст**: «У тебя есть подписка платного VPN-провайдера, свой
-   заграничный VPS, или ты хочешь оба?»
-2. **Мини-урок**: «Путь A (подписка): минимум усилий, провайдер сам
-   адаптируется к РКН. Путь B (свой загр.VPS): полный контроль, но больше
-   инфраструктуры. Гибрид: свой как основной + подписка как fallback.»
-3. **Варианты с плюсами и минусами**.
-4. **Рекомендация**: при сомнениях — Путь A.
-5. **Разрешение довериться**.
-6. **Открытая дверь**: «Подробнее в `multi-hop-architectures.md`».
+Сеньор-обёртка (раздел 4.3 персоны), два пути — `references/multi-hop-architectures.md`:
+**Путь A (подписка)** — минимум усилий, провайдер сам адаптируется к РКН;
+**Путь B (свой загр.VPS)** — полный контроль, больше инфраструктуры; **Гибрид** —
+свой основной + подписка fallback. Контекст → мини-урок → варианты с плюсами/минусами
+→ рекомендация (при сомнениях Путь A) → разрешение довериться → открытая дверь.
 
 ## Шаг 2: Брифинг 6 пунктов (Yellow Zone)
 
@@ -243,22 +229,13 @@ INBOUND_LISTEN_PORT="$INBOUND_PORT" \
 ... ./scripts/create-vless-inbound.sh
 ```
 
-> 🧑‍🏫 **Reality на РФ-сервере — не запрет, а менторская развилка.** Если оператор
-> (или его ученик) хочет Reality на РФ-inbound — например, чтобы поэкспериментировать,
-> разобраться, как оно устроено, или под нестандартный кейс — я **не обрываю**
-> словами «нет, не буду». Вхожу в роль ментора:
-> 1. Объясняю, **почему обычно не нужно**: маршрут внутри РФ не пересекает TSPU,
->    маскировать нечего; штатно хватает VLESS-TCP (заработал бы и WireGuard).
-> 2. Уточняю: **«ты точно этого хочешь?»** — это эксперимент/учёба или предполагалось,
->    что так надёжнее?
-> 3. Если подтверждает осознанно — создаю: повторяю запуск с
->    `CONFIRM_REALITY_ON_RU=yes`. Решение за оператором, моя работа — чтобы выбор
->    был информированным.
->
-> Guard в `create-vless-inbound.sh` ловит только **случайную** подстановку Reality
-> на РФ-сервер (выход с кодом 3 = «нужно подтверждение», не ошибка). Это защита от
-> повторения инцидента, когда агент сам, без запроса, нацепил Reality — а не запрет
-> на осознанный эксперимент. См. рефлекс персоны 3.8.5, `vpn-consultation-flow.md` §4.
+> 🧑‍🏫 **Reality на РФ-сервере — менторская развилка, не запрет.** Дефолт для
+> `ru-server` — `vless-tcp` (внутри РФ TSPU не пересекается, маскировать нечего).
+> Если оператор осознанно хочет Reality на РФ-inbound (эксперимент/учёба) — не
+> обрываю, объясняю почему обычно не нужно, уточняю «точно хочешь?», и при
+> подтверждении повторяю запуск с `CONFIRM_REALITY_ON_RU=yes`. Guard в
+> `create-vless-inbound.sh` (exit 3) ловит только СЛУЧАЙНУЮ подстановку. Полный
+> менторский сценарий — `references/pitfalls.md`; рефлекс персоны 3.8.5.
 
 При создании — сразу один client_uuid для первичного клиента (имя из
 `CLIENT_NAMES[0]` или `admin`).
@@ -292,15 +269,9 @@ SUBS_FILE="$INFRA_DIR/inventory/shared/vpn-subscriptions/${PROVIDER_SLUG:-subscr
   # массив серверов с полем "country" (US/NL/DE/.../?)
   ```
 - **Сервера ещё не извлечены** (файла нет): НЕ извлекаю сам. Останавливаюсь и
-  направляю оператора:
-  > «Чтобы завести сервера твоей подписки в панель, их сначала надо достать из
-  > подписки — этим занимается отдельная команда, она проведёт тебя по шагам
-  > простым языком: `/extract-subscription-servers`. Запусти её, а потом вернёмся
-  > сюда — я заведу сервера в панель и настрою маршрутизацию.»
-  >
-  > Это особенно важно для закрытых подписок (Panterra, NurVPN): там нужен
-  > «отпечаток устройства» и иногда — освободить слот; всё это `/extract-subscription-servers`
-  > делает «под ключ». См. ADR-0010.
+  направляю оператора на `/extract-subscription-servers` — он достанет сервера из
+  подписки «под ключ» (форматы, HWID-замок, слоты; особенно важно для закрытых
+  Panterra/NurVPN), а потом вернёмся сюда. См. ADR-0010 и `references/pitfalls.md`.
 
 После получения `/tmp/subs-enriched.json` — переход к 5A.2 (выбор страны выхода).
 
@@ -334,20 +305,17 @@ SUBS_FILE="$INFRA_DIR/inventory/shared/vpn-subscriptions/${PROVIDER_SLUG:-subscr
   `probeInterval=5m`. Объяснить: «Работать будешь в основном с одного, самого
   быстрого. Если он упадёт — незаметно переедешь на соседний, но страна та же,
   аккаунт не пострадает. IP скакать не будет — переоценка редкая.»
-- **Пресет «один фиксированный сервер»:** если ученику критичен абсолютно
+- **Пресет «один фиксированный сервер»:** если оператору критичен абсолютно
   неизменный IP — завести ОДИН сервер выбранной страны, без балансира.
   Объяснить минус: «Упадёт — переключим вручную.»
 - **Пресет «разные страны / самый быстрый пинг любой ценой» (только осознанно):**
   балансир из серверов РАЗНЫХ стран. **Дефолтом НЕ предлагать, по своей инициативе
-  НЕ собирать** (рефлекс персоны 3.8.6). Если оператор просит сам — войти в роль
-  ментора и проговорить риск дословно: «IP будет прыгать между странами. Для
-  антифрода нейросетей (OpenAI/Anthropic/Google) смена страны внутри сессии =
-  паттерн угона аккаунта → капчи, верификация, бан. Скачущий IP не обходит
-  блокировку — он сам её триггер. Это годится ТОЛЬКО если ты НЕ работаешь через
-  этот VPN с нейронками.» Уточнить: «это для нейронок или для другого трафика?».
-  При осознанном согласии — на Шаге 6 добавить `CONFIRM_MULTI_COUNTRY=yes`.
-  **Запрет:** не повторять ложь «балансир между странами не влияет на блокировки»
-  (приоритет №1 CLAUDE.md — она фактически неверна).
+  НЕ собирать** (рефлекс 3.8.6): скачущий IP = бан антифродом нейросетей (смена
+  страны в сессии = паттерн угона аккаунта). Если оператор просит сам — войти в роль
+  ментора и проговорить риск дословно (полный текст — `references/pitfalls.md`),
+  уточнить «это для нейронок или другого трафика?», при осознанном согласии —
+  `CONFIRM_MULTI_COUNTRY=yes` на Шаге 6. **Запрет:** не повторять ложь «балансир
+  между странами не влияет на блокировки» (приоритет №1 CLAUDE.md — фактически неверна).
 
 ```bash
 # Завести выбранные сервера как outbound
@@ -386,19 +354,11 @@ PROBE_INTERVAL=5m \
 ```
 
 > ⛔ **Guard «разные страны в балансире».** Если `UPSTREAM_COUNTRIES_JSON` содержит
-> >1 страны (или не передан вовсе) — `setup-routing.sh` делает **exit 3** с
-> менторским объяснением и НЕ собирает балансир. Это защита от «скачущего IP по
-> странам» = бана нейросетей. Обойти можно ТОЛЬКО осознанно — пресет «разные
-> страны» из Шага 5A.3, с проговорённым риском и `CONFIRM_MULTI_COUNTRY=yes`:
-> ```bash
-> UPSTREAM_TAGS_JSON='["upstream-us","upstream-de"]' \
-> UPSTREAM_COUNTRIES_JSON='["us","de"]' \
-> CONFIRM_MULTI_COUNTRY=yes \
-> BALANCER_STRATEGY=leastPing PROBE_INTERVAL=5m \
-> ./scripts/setup-routing.sh
-> ```
-> Симметрично `CONFIRM_REALITY_ON_RU` в `create-vless-inbound.sh`. См. рефлекс
-> персоны 3.8.6 и ADR-0011.
+> >1 страны (или не передан вовсе) — `setup-routing.sh` делает **exit 3** и НЕ
+> собирает балансир (защита от скачущего IP = бана нейросетей). Обойти ТОЛЬКО
+> осознанно: пресет «разные страны» из 5A.3 + `CONFIRM_MULTI_COUNTRY=yes` (рабочий
+> пример вызова — `references/pitfalls.md`). Симметрично `CONFIRM_REALITY_ON_RU` в
+> `create-vless-inbound.sh`. Рефлекс персоны 3.8.6 и ADR-0011.
 
 > 🧭 **Стратегия балансира — что выбирать.** Дефолт `leastPing` + `probeInterval=5m`
 > + сервера одной страны = стабильный IP в норме, авто-failover при падении, страна
@@ -408,26 +368,14 @@ PROBE_INTERVAL=5m \
 > Если выбран пресет «один сервер» (Шаг 5A.3) — `USE_BALANCER=no`, балансир не
 > создаётся, default-правило шлёт на единственный outbound.
 
-Создаёт `routing.rules` по модели **«золотая середина»** (7 правил, порядок
-сверху вниз — первое совпавшее применяется; см. эталон
-`16-ЭТАЛОН-гибкой-маршрутизации-3xui.md` §2.5):
-
-1. `inboundTag=api` → `api` (служебное).
-2. `ip=geoip:private` → `direct` (локальная сеть; **НЕ blocked**).
-3. `protocol=bittorrent` → `blocked`.
-4. `domain=geosite:category-ads-all` → `blocked` (реклама раньше РФ-правил).
-5. `ip=geoip:ru` → `direct` (ловит топ-РФ-сервисы по IP — банки/госуслуги/маркетплейсы
-   на российских ASN).
-6. `domain=[geosite:category-ru, regexp:.+\.ru$, regexp:.+\.su$, regexp:.+\.xn--p1ai$]`
-   → `direct` (свежие РФ-домены по TLD; `.рф` пишется в punycode).
-7. default (`inboundTag`=все vless/mixed inbounds) → `balancerTag=upstream-balancer`
-   (или `outboundTag`=единственный upstream).
-
-**Явный список РФ-доменов на не-РФ TLD НЕ добавляется** — research показал, что
-топ-сервисы все на российских IP и ловятся правилом 5 (`geoip:ru`), а домены
-вроде `tinkoff.com` выдуманы (эталон §2.6). Скрипт также гарантирует наличие
-outbound `direct` (freedom) и `blocked` (blackhole) — последний нужен для правил
-3 и 4.
+Создаёт `routing.rules` по модели **«золотая середина»** — те же 7 правил, что
+перечислены в `<goals>` (порядок сверху вниз, первое совпавшее применяется; эталон
+`16-ЭТАЛОН-гибкой-маршрутизации-3xui.md` §2.5). Ключевое: `geoip:private`→direct
+отдельным приоритетным правилом (не в куче с РФ); реклама (`category-ads-all`) и
+bittorrent → blocked; РФ ловится `geoip:ru` + `category-ru` + regex `.ru/.su/.рф`
+(`.рф` в punycode `xn--p1ai`). **Явный список РФ-доменов на не-РФ TLD НЕ добавляется**
+(топ-сервисы на РФ-IP, ловятся `geoip:ru`; домены вроде `tinkoff.com` выдуманы —
+§2.6). Скрипт гарантирует наличие outbound `direct` (freedom) и `blocked` (blackhole).
 
 При `leastPing`/`leastLoad` — добавляется observatory с
 `probeUrl=http://www.google.com/gen_204` и `probeInterval=$PROBE_INTERVAL`
@@ -468,37 +416,17 @@ api_get_xray_config | jq ".obj.routing.rules"
 
 ## Шаг 9: Обновление inventory и конфига
 
-Inventory:
+Inventory — в `inventory/hosts/$SERVER_ALIAS/networks.md` добавляется раздел
+`## VPN routing` с подразделами:
 
-```markdown
-# inventory/hosts/$SERVER_ALIAS/networks.md (раздел добавляется)
-
-## VPN routing
-
-### Inbound
-- `inbound-443` (vless-${INBOUND_PROTOCOL}, port=$INBOUND_PORT)
-- Клиенты: 4 (alice, bob, mum, work-laptop) — UUID в `vpn-clients/*.md`
-
-### Outbound
-- Страна выхода: США (выбрана оператором). Пресет: country-failover.
-- `upstream-us-1`, `upstream-us-2`, `upstream-us-3` (от провайдера X / 3 сервера США)
-  ИЛИ
-- `upstream-myhetzner` (свой загр.VPS)
-- Сервера подписки сохранены: `$INFRA/inventory/shared/vpn-subscriptions/<provider>.json`
-
-### Balancer
-- `upstream-balancer` (strategy=leastPing, fallback=direct, observatory probeInterval=5m)
-  — стабильный IP в норме + авто-failover внутри страны.
-  (Пресет single → балансира нет, один фиксированный outbound.)
-
-### Routing (модель «золотая середина», 7 правил)
-- Приватные сети (geoip:private) → direct
-- Реклама (geosite:category-ads-all) → blocked
-- bittorrent → blocked
-- РФ-трафик по IP (geoip:ru) → direct
-- РФ-домены (geosite:category-ru + regex .ru/.su/.рф) → direct
-- Остальное → balancer (или единственный upstream)
-```
+- **Inbound** — `inbound-$INBOUND_PORT` (vless-`$INBOUND_PROTOCOL`); клиенты + ссылка
+  на UUID в `vpn-clients/*.md`.
+- **Outbound** — страна выхода `$EXIT_COUNTRY`, пресет `$OUTBOUND_PRESET`; теги
+  `upstream-*` (от провайдера ИЛИ свой загр.VPS); файл серверов подписки в
+  `shared/vpn-subscriptions/<provider>.json`.
+- **Balancer** — `upstream-balancer` (leastPing, observatory probeInterval=5m);
+  при пресете `single` балансира нет, один фиксированный outbound.
+- **Routing** — модель «золотая середина», 7 правил (перечень — в `<goals>` / Шаг 6).
 
 `infra-config.json` — `vpn.upstream_kind` обновляется (`subscription` /
 `self-foreign` / `mixed`).
@@ -516,12 +444,9 @@ Inventory:
 ✓ Inventory обновлён: $INFRA/inventory/hosts/$SERVER_ALIAS/networks.md
 ✓ Config обновлён: vpn.upstream_kind=$OUTBOUND_KIND
 
-🔍 Smoke check шагов:
-  1. Зайди в панель: $PANEL_URL — должны быть видны новые inbound/outbound/clients.
-  2. Возьми vless://-ссылку для одного из клиентов через `/generate-client-config`.
-  3. Импортируй в Hiddify/Karing на телефоне.
-  4. Проверь на 2ip.ru: РФ-сайты → твой РФ-IP; зарубежные → IP upstream-сервера.
-  5. Реклама на страницах должна резаться (правило category-ads-all → blocked).
+🔍 Smoke check: открой панель $PANEL_URL (видны новые inbound/outbound/clients) →
+  выпусти ссылку клиента через /generate-client-config → импортируй в Happ/Hiddify →
+  проверь на 2ip.ru (РФ-сайты → твой РФ-IP, зарубежные → IP upstream; реклама режется).
 
 ➡️  Следующий шаг (опционально): `/generate-client-config` для генерации
     QR-кодов и sing-box JSON для клиентских устройств.
@@ -529,120 +454,47 @@ Inventory:
 
 # Откат
 
-Бэкап xray-конфига сохраняется до изменений. При сбое:
+Бэкап xray-конфига сохраняется до изменений. При сбое — восстановить:
 
 ```bash
-# Получаем бэкап (если сохранили перед началом)
-ssh $SSH_TARGET "cp /etc/x-ui/x-ui.db.backup.<timestamp> /etc/x-ui/x-ui.db && systemctl restart x-ui"
+# из db-бэкапа на сервере:
+ssh $SSH_TARGET "cp /etc/x-ui/x-ui.db.backup.<ts> /etc/x-ui/x-ui.db && systemctl restart x-ui"
+# или через API из сохранённого JSON-конфига до изменений:
+api_update_xray_config "$BACKUP_CONFIG_JSON" && api_restart_xray
 ```
 
-Или восстановление через API:
-```bash
-# Если есть сохранённый JSON-конфиг до изменений
-api_update_xray_config "$BACKUP_CONFIG_JSON"
-api_restart_xray
-```
+# Подводные камни и граничные случаи
 
-# Failed attempts (граблекейс)
+Полный список грабель и граничных ситуаций — `references/pitfalls.md`. Самое
+критичное по безопасности (его нельзя забыть) — здесь:
 
-- **Поиск sticky-порога «N мс разницы» в панели 3X-UI** — его ТАМ НЕТ. Форма
-  балансировщика в 3X-UI имеет только 4 поля (tag/strategy/selector/fallbackTag),
-  Observatory-редактор не содержит порога-гистерезиса в миллисекундах (проверено
-  в исходнике `BalancersTab.tsx`, 2026-05-24). Настройка «toleration/Latency»
-  (держись за сервер, пока он не станет хуже на N мс) существует ТОЛЬКО на клиенте
-  (sing-box `urltest.tolerance`). НЕ вписывать несуществующее поле в серверный
-  балансир (правило №1 CLAUDE.md). Стабильность IP на сервере = «одна страна в
-  selector» + `probeInterval=5m` + при необходимости один сервер. См.
-  `3x-ui-panel.md` §1.3.
-- **Заведение ВСЕХ серверов подписки в один балансир скопом** — даёт «скачущий IP
-  по странам» = бан аккаунта. Опасны ДВА детектора: (1) платформы РФ-2026 детектят
-  прыжки; (2) — главное — **антифрод нейросетей (OpenAI/Anthropic/Google)**: смена
-  страны внутри сессии = паттерн угона аккаунта → капчи, верификация, бан. Скачущий
-  IP не обходит блокировку, а сам её триггерит. Правильно: сохранить все в infra, но
-  в outbound завести ТОЛЬКО выбранную оператором страну (Шаг 5A.2–5A.3).
-  **С v1.8.0 это enforced кодом:** `setup-routing.sh` при >1 страны в
-  `UPSTREAM_COUNTRIES_JSON` (или при его отсутствии) делает exit 3 без
-  `CONFIRM_MULTI_COUNTRY=yes`. Свободный разговор мимо скилла ловит рефлекс персоны
-  3.8.6. Инцидент-первопричина: агент посоветовал ученику балансир между странами
-  со словами «не влияет на блокировки нейронок» (ложь). См. ADR-0011 и
-  `../../knowledge/networking/_reference/vpn-consultation-flow.md` §9.1.
-- **VLESS+Reality на РФ-сервере для входа клиентов** — штатно избыточно (не
-  запрещено). Маршрут «клиент в РФ → сервер в РФ» не пересекает TSPU, маскировка
-  обычно ни от чего не защищает (заработал бы и WireGuard). Дефолт для `ru-server`
-  inbound — `vless-tcp`. Reality на РФ-сервере создаётся только по осознанному
-  подтверждению (`CONFIRM_REALITY_ON_RU=yes`) после менторского объяснения — для
-  эксперимента/учёбы это нормально. Guard в `create-vless-inbound.sh` (exit 3 без
-  подтверждения) ловит только СЛУЧАЙНУЮ подстановку, не осознанный выбор.
-  Наблюдённый инцидент (2026-05): агент в свободном режиме сам, без запроса,
-  создал Reality-inbound на РФ-сервере, сбив оператора. См. рефлекс персоны 3.8.5.
-- **`outbound` правится через прямое CRUD-API** — НЕТ такого. Outbound редактируются
-  только через `getXrayConfig` / `updateXrayConfig` (см. `3x-ui-api.md` §6.1).
-- **«Сохранить» в UI не нажали** — изменения через API панель применяет сама,
-  но **restart Xray** должен быть явный (`api_restart_xray`).
-- **`leastPing` без observatory** — не работает. Скилл всегда добавляет observatory
-  для этой стратегии.
-- **`pingConfig` в balancer** — устаревшее имя, в современном Xray поле называется
-  `observatory.probeInterval` + `observatory.probeUrl`.
-- **Reality privateKey передан клиенту** — НИКОГДА. Клиенту даётся publicKey
-  (см. `add-outbound-from-vless.sh` — privateKey хранится на сервере, в vless://
-  идёт только pbk = publicKey).
-- **Маршрутизация после restart не работает** — проверить `domainStrategy` в
-  routing: должно быть `"IPIfNonMatch"`, не `"AsIs"`. Это включает sniffing.
-- **Sniffing не включён на inbound** — domain-based routing не работает (геосайты
-  не сматчатся). Скилл всегда включает `sniffing: { enabled: true,
-  destOverride: ["http","tls","quic"] }` (и на vless-, и на mixed-inbound).
-- **Одно объединённое direct-правило (geoip:ru+category-ru+private → direct)** —
-  старая модель скилла (до 24 мая). Проблемы: (1) `geoip:private` мешался в одну
-  кучу с РФ-правилами вместо отдельного приоритетного правила; (2) не было блока
-  рекламы (`category-ads-all`) и bittorrent; (3) не было punycode-regex для `.рф`.
-  Заменено на 7-правильную модель «золотая середина» (эталон §2.5). Реклама режется,
-  приватные сети в отдельном правиле №2, РФ-сервисы ловятся `geoip:ru` (явный список
-  доменов НЕ нужен — §2.6 эталона: домены типа `tinkoff.com` выдуманы).
-- **`regexp:.*\\\\.ru$` (четыре бэкслеша в jq-программе)** — баг старого скрипта.
-  В JSON это давало `regexp:.*\\.ru$`, а Xray интерпретировал `\\.` как «литеральный
-  бэкслеш + любой символ» — regex не матчил реальные домены. Правильно: **два
-  бэкслеша** в jq-источнике (`regexp:.+\\.ru$`), что даёт JSON `regexp:.+\\.ru$`
-  и рантайм-regex `regexp:.+\.ru$` (литеральная точка). Совпадает с эталоном §4.1.
-
-# Граничные случаи
-
-- **Сервера ещё не извлечены из подписки** (нет файла
-  `$INFRA/inventory/shared/vpn-subscriptions/<provider>.json`) → НЕ извлекать здесь.
-  Направить оператора на `/extract-subscription-servers` (он делает извлечение
-  «под ключ»: форматы, HWID-замок, слоты), потом вернуться сюда. См. Шаг 5A.1.
-- **Подписка закрытая/зашифрованная** (Panterra, NurVPN — заглушка вместо серверов,
-  HWID-замок) → это целиком зона `/extract-subscription-servers` (ADR-0010). Здесь
-  не дублируется. configure-vpn-routing работает только с уже извлечённым JSON.
-- **Reality dest валидируется при self-foreign** → если `parse-vless-link.sh`
-  получил `serverName` с подсанкционным доменом или TLS 1.2 only — предупредить
-  оператора (но не fail, провайдер мог использовать что-то нетривиальное).
-- **Inbound уже существует** → скилл предлагает использовать существующий
-  (не пересоздавать) и переходит к outbound.
-- **Outbound уже существует с тем же tag** → скилл идемпотентно перезаписывает
-  (см. `add-outbound-from-vless.sh` — `outbounds |= map(select(.tag != $tag))`
-  перед добавлением).
-- **Конфликт inboundTag в routing** → скилл при `setup-routing.sh` берёт все
-  vless-inbound из `list`, не хардкодит. Если нужно ограничить — передать
-  `INBOUND_TAGS_JSON='["inbound-443"]'`.
-- **Cloudflare proxy включён на A-записи серверного inbound** → клиенту cert
-  не валидируется, Reality не сработает. Решение: отключить proxy (серое
-  облако) для VPN-домена.
-- **Страна сервера = `?`** (тег без флага/текста) → `/extract-subscription-servers`
-  НЕ выдумывает страну при разметке. Определить по гео-IP хоста
-  (`curl -s ipinfo.io/<host>/country`) или честно спросить оператора. Не
-  подставлять «правдоподобную» страну (правило №1).
-- **Оператор хочет страну, которой нет в подписке** → честно сказать: «В твоей
-  подписке нет серверов в <стране>. Есть: <список>.» Не выдумывать сервер.
+- **НЕ заводить сервера разных стран в один балансир.** Скачущий IP = бан
+  антифродом нейросетей (OpenAI/Anthropic/Google: смена страны в сессии = угон).
+  Enforced: `setup-routing.sh` делает exit 3 при >1 страны без
+  `CONFIRM_MULTI_COUNTRY=yes`. Рефлекс 3.8.6, ADR-0011.
+- **НЕ ставить Reality на РФ-inbound по своей инициативе** — внутри РФ TSPU не
+  пересекается, маскировать нечего; дефолт `vless-tcp`. Reality на РФ — только по
+  осознанному `CONFIRM_REALITY_ON_RU=yes` после менторского объяснения. Guard в
+  `create-vless-inbound.sh` (exit 3) ловит случайную подстановку. Рефлекс 3.8.5.
+- **Sticky-порога «N мс» в серверном балансире 3X-UI НЕТ** — это клиентская
+  настройка sing-box (`urltest.tolerance`). НЕ вписывать несуществующее поле
+  (правило №1). Стабильность IP = одна страна + `probeInterval=5m`.
+- **Outbound правится ТОЛЬКО через get/updateXrayConfig** (нет CRUD-API); после
+  изменений — явный `api_restart_xray`; `leastPing` требует observatory (не
+  `pingConfig`); `domainStrategy=IPIfNonMatch` + sniffing иначе routing не работает;
+  Reality privateKey клиенту НИКОГДА (только pbk).
+- **Сервера ещё не извлечены из подписки** → НЕ извлекать здесь, направить на
+  `/extract-subscription-servers`. Страна `?` → определить по гео-IP или спросить,
+  не выдумывать (правило №1).
 
 # Связанные документы
 
 - `/extract-subscription-servers` — извлечение серверов из подписки (в т.ч.
   закрытых HWID-locked). Запускается ДО этого скилла, сохраняет сервера в infra.
 - `references/multi-hop-architectures.md` — два пути outbound + гибрид.
-- `scripts/parse-vless-link.sh` — разбор одного vless://-link (для self-foreign и add-outbound).
 - `decisions/0010-hwid-locked-subscriptions.md` — решение по HWID-замку и слотам.
 - `../../knowledge/networking/_reference/vpn-protocols.md` §4 — теория multi-hop.
 - `../../knowledge/networking/_reference/3x-ui-api.md` §6 — outbounds + routing через API.
 - `../../knowledge/networking/_reference/3x-ui-panel.md` §1.3-1.4 — balancers + observatory.
 - `decisions/0005-vpn-architecture.md` §3 — архитектурное решение.
-- `evals/triggers.md` — фразы оператора.
+- `references/pitfalls.md` — полный список грабель и граничных случаев.
