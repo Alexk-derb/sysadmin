@@ -39,6 +39,25 @@ if [ "$PERSONA_TOUCHED" -eq 0 ]; then
     exit 0   # персону не трогали — хук молча пропускает коммит
 fi
 
+# --- бюджет ядра CLAUDE.md (ADR-0016, анти-храповик) -----------------------
+# Ядро грузится при КАЖДОМ старте — раздувание бьёт по контексту. Бюджет в байтах
+# (wc -c, детерминированно при кириллице). Поднять бюджет — только осознанным ADR.
+CLAUDE_BUDGET_BYTES=42000
+CLAUDEMD="$ROOT/CLAUDE.md"
+case "$STAGED" in
+    *"CLAUDE.md"*)
+        if [ -f "$CLAUDEMD" ]; then
+            BYTES="$(wc -c < "$CLAUDEMD" | tr -d ' ')"
+            if [ "$BYTES" -gt "$CLAUDE_BUDGET_BYTES" ]; then
+                echo "❌ pre-commit ЗАБЛОКИРОВАН: CLAUDE.md = ${BYTES} Б > бюджет ${CLAUDE_BUDGET_BYTES} Б (ADR-0016)." >&2
+                echo "   Ядро грузится при каждом старте. Вынеси часть в references/ («одно входит — одно выходит»)," >&2
+                echo "   либо подними бюджет осознанно через ADR (анти-храповик). Обход (редко): git commit --no-verify" >&2
+                exit 1
+            fi
+        fi
+        ;;
+esac
+
 # --- линтер на месте? ------------------------------------------------------
 if [ ! -f "$LINTER" ]; then
     echo "⚠️  pre-commit: персона меняется, но линтер не найден ($LINTER) — пропускаю проверку." >&2
