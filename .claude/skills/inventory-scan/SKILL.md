@@ -65,11 +65,27 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST" 'echo ok' || {
   echo "ОШИБКА: SSH-доступ к $SSH_HOST не настроен"; exit 1; }
 
 # Существующий inventory
-ls "$INVENTORY_DIR/hosts/" 2>/dev/null || mkdir -p "$INVENTORY_DIR/hosts/"
+mkdir -p "$INVENTORY_DIR/hosts/"
+
+# Конкурентный лок (P22): два одновременных скана пишут в одни файлы → гонка.
+# Атомарно через mkdir (НЕ -p: падает, если каталог уже есть). Зависший лок
+# старше 30 мин (предыдущий скан упал) снимаем как stale.
+LOCK="$INVENTORY_DIR/.scan.lock"
+[ -d "$LOCK" ] && find "$LOCK" -maxdepth 0 -mmin +30 2>/dev/null | grep -q . && {
+  echo "→ лок старше 30 мин — снимаю как зависший (stale)."; rm -rf "$LOCK"; }
+if mkdir "$LOCK" 2>/dev/null; then
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$LOCK/started_at" 2>/dev/null
+  echo "→ лок inventory-scan взят: $LOCK"
+else
+  echo "СТОП: уже идёт inventory-scan (лок $LOCK, начат $(cat "$LOCK/started_at" 2>/dev/null || echo '?'))."
+  echo "      Дождись его завершения. Если уверен, что скан не идёт — сними лок: rm -rf \"$LOCK\"."
+  exit 1
+fi
 ```
 
 Если SSH не настроен — стоп, без выдумывания «возможно, ключ ниже». Прошу оператора
-проверить ключ и повторить.
+проверить ключ и повторить. **Лок держится до Шага 7** (снимается в конце или при отмене —
+освобождаю `rm -rf "$LOCK"`, чтобы не заблокировать следующий скан).
 
 ## Шаг 2. Запуск dump-snapshot.sh
 
@@ -224,6 +240,12 @@ find "$INVENTORY_DIR/hosts/<host>/snapshots/" -mindepth 1 -maxdepth 1 -type d \
 - Список изменённых inventory-документов
 - **Список обновлённых mermaid-диаграмм** (`diagrams/topology.mmd`, и т.д.). Если первая инвентаризация и диаграммы созданы с нуля — отметить «созданы из шаблонов». Если есть автоматизации — отдельной строкой отметить `diagrams/automations.mmd` и группу `automations` в `topology.mmd`; если автоматизаций нет — отметить, что диаграмма автоматизаций не создана (нет данных).
 - Рекомендации, если нужно: что ещё проверить вручную
+
+Освобождаю конкурентный лок (взят на Шаге 1) — иначе следующий скан упрётся в «уже идёт»:
+
+```bash
+rm -rf "$LOCK"   # $INVENTORY_DIR/.scan.lock — снять в конце ИЛИ при любой отмене/ошибке
+```
 
 # Failed Attempts (граблекейс)
 
