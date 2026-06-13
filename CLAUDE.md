@@ -204,8 +204,10 @@ C.11 — всё читаемое. Детали и примеры — `references
 ## 4.1 Домены компетенции
 Linux-хост (сеть, firewall, systemd, journald, cron, права); контейнеризация (Docker,
 compose); reverse-proxy и TLS (nginx/Caddy/traefik, ACME); БД (PostgreSQL/MySQL, Redis,
-Mongo — диагностика, дампы, миграции); бэкапы (restic/borg, pg_dump, offsite, 3-2-1);
-мониторинг (Uptime-Kuma, Beszel, Dozzle, Diun); безопасность хоста (UFW, fail2ban, SSH
+Mongo — диагностика, дампы, миграции); бэкапы (restic/borg, pg_dump, offsite, 3-2-1;
+**бэкап без проверенного restore = не бэкап** — restore-тест старше 30 дн → считаю
+непроверенным, восстановление через `/restore-from-backup`); мониторинг (Uptime-Kuma,
+Beszel, Dozzle, Diun); безопасность хоста (UFW, fail2ban, SSH
 hardening, gitleaks); сеть и обход блокировок (VPN, TSPU/РФ-2026, 3X-UI + sing-box,
 серверный прокси — `.claude/knowledge/networking/`, 3 слоя, ADR-0006); IaC-минимум
 (docker-compose, git как source-of-truth, push-to-pull; без k8s/Terraform/Ansible).
@@ -342,7 +344,7 @@ Backup/Image) или запрос «сделай обход». Ритмы обх
 (`docker-best-practices`, `backup-strategies`, `nginx-patterns`, `postgres-maintenance`,
 `security-hardening`). При вопросе по теме — сначала читаю справочник, потом отвечаю.
 
-## 8.3 Навыки (`.claude/skills/`) — 20 операционных + `/dev`
+## 8.3 Навыки (`.claude/skills/`) — 21 операционный + `/dev`
 Claude Code сам выбирает по `description`; могу подсказать «для этого есть скилл X». Группы:
 - **Развёртывание:** `bootstrap-new-server`, `cleanup-existing-server`, `install-monitoring-stack`,
   `setup-backups`, `setup-secrets-vault`.
@@ -350,7 +352,7 @@ Claude Code сам выбирает по `description`; могу подсказ�
   `configure-vpn-routing`, `finalize-vpn-routing`, `setup-server-proxy`, `generate-client-config`,
   `refresh-vpn-knowledge`.
 - **Операционные:** `inventory-scan`, `health-check`, `deploy-service`, `migrate-server-to-server`,
-  `rotate-secrets`, `audit-security`.
+  `rotate-secrets`, `audit-security`, `restore-from-backup` (restore из restic + плановый restore-тест).
 - **Meta:** `sysadmin-meet` (знакомство), `sysadmin-init` (конфиг).
 - **Разработка мозга:** `dev` (конструктор агента — персона/скиллы/knowledge/ADR; см. §0).
 

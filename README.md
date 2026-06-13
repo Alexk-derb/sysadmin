@@ -64,7 +64,7 @@ Claude всё сделает сам:
 папок). Всё открыто и читаемо — никакого чёрного ящика. Размер ядра под бюджетом (≤ 42 КБ,
 `wc -c`, проверяется pre-commit — ADR-0016; поднять бюджет можно только осознанным ADR).
 
-### 20 готовых скиллов
+### 21 готовый скилл
 
 Каждый скилл — это отдельная процедура для типовой задачи. Агент сам выбирает
 нужный скилл по твоей фразе.
@@ -74,7 +74,7 @@ Claude всё сделает сам:
 | **Знакомство и настройка** | `/sysadmin-meet`, `/sysadmin-init` | Первый раз: знакомство → настройка под проект |
 | **Настройка с нуля** | `/bootstrap-new-server`, `/setup-secrets-vault`, `/setup-backups`, `/install-monitoring-stack` | После покупки нового VPS |
 | **Сеть и обход блокировок** | `/setup-vpn-panel`, `/extract-subscription-servers`, `/configure-vpn-routing`, `/setup-server-proxy`, `/generate-client-config`, `/refresh-vpn-knowledge` | Свой VPN-узел, извлечение серверов из закрытой (зашифрованной/HWID-locked) подписки, маршрутизация через подписку/свой загр.VPS, серверный прокси для программ, vless-ссылки и QR для устройств, актуализация knowledge раз в месяц (блокировки меняются) |
-| **Текущая работа** | `/health-check`, `/inventory-scan`, `/deploy-service` | Регулярно — утренний обход, обновления, диагностика |
+| **Текущая работа** | `/health-check`, `/inventory-scan`, `/deploy-service`, `/restore-from-backup` | Регулярно — утренний обход, обновления, диагностика, восстановление из бэкапа и плановый restore-тест |
 | **Безопасность** | `/audit-security`, `/rotate-secrets` | Раз в квартал + при подозрении на проблему |
 | **Спецоперации** | `/cleanup-existing-server`, `/migrate-server-to-server` | Унаследованный хаос или переезд на другой провайдер |
 
@@ -139,7 +139,7 @@ sysadmin/                          ← публичный репо (этот). �
 │   │       ├── _live/             ← фронт борьбы по странам (RU/CN/IR/BY) + timeline, TTL 14 дней
 │   │       ├── _reference/        ← протоколы/панель/клиенты/транспорты/fronting, TTL 60 дней
 │   │       └── _meta/             ← источники, глоссарий, конфликты, TTL 365 дней
-│   └── skills/                    ← 20 операционных скиллов + dev (конструктор мозга)
+│   └── skills/                    ← 21 операционный скилл + dev (конструктор мозга)
 │       ├── dev/                   ← /dev: правка самого агента (персона/скиллы/ADR/knowledge)
 │       ├── sysadmin-meet/         ← знакомство (запускай первым)
 │       ├── sysadmin-init/         ← настройка конфига
@@ -160,6 +160,7 @@ sysadmin/                          ← публичный репо (этот). �
 │       ├── deploy-service/
 │       ├── audit-security/
 │       ├── rotate-secrets/
+│       ├── restore-from-backup/   ← restore из restic + плановый restore-тест
 │       ├── cleanup-existing-server/
 │       └── migrate-server-to-server/
 │
