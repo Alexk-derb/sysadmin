@@ -1,0 +1,17 @@
+# .gitleaksignore — задокументированные allowlist'ы для gitleaks (по фингерпринтам).
+#
+# Каждая строка — известное СРАБАТЫВАНИЕ-FALSE-POSITIVE с обоснованием. Это НЕ способ
+# прятать настоящие секреты — только помечать заведомо-примерные значения в документации,
+# чтобы `gitleaks detect` был зелёным, а решение оставалось аудируемым.
+#
+# Формат фингерпринта: <commit>:<file>:<rule>:<startline>
+#
+# ── Пример Reality-keypair в документации (НЕ реальный секрет оператора) ──────────────
+# Один и тот же x25519-keypair приведён как ПРИМЕР ВЫВОДА команды генерации ключей
+# (`xray x25519` / `sing-box generate reality-keypair`) — чтобы показать формат вывода.
+# Это иллюстрация в knowledge/planning-доке, а не боевой ключ: реальные Reality-ключи
+# генерируются per-inbound на сервере и в git не попадают (C.5). Коммиты от 2026-05-15,
+# уже публичны; файлы с тех пор перемещены (_reference/) или сняты с трекинга (.planning/).
+6a03e1d6f86406fca9b515258b861161269a3460:.claude/knowledge/networking/3x-ui-api.md:generic-api-key:276
+6a03e1d6f86406fca9b515258b861161269a3460:.claude/knowledge/networking/3x-ui-api.md:generic-api-key:277
+f82b788cc3f68368a3c78c8d401cb6b086790250:.planning/singbox-vs-xray-and-configs.md:generic-api-key:850
