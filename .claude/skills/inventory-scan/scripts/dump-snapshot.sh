@@ -46,14 +46,22 @@ DATE="${2:-$(date +%Y-%m-%d)}"
 INVENTORY_DIR="${3:-${INVENTORY_DIR:-inventory}}"
 
 # === Определение имени хоста для пути ===
+# Канон имени папки хоста — из infra-config.json servers[].alias; его передаёт
+# SKILL через env HOST_DIR (Шаг 2). Без override выводим из SSH-target как
+# fallback, НО это риск раздвоить inventory: алиас `selectel` дал бы `prod-selectel`,
+# а записанный хост — `prod-82.148.28.22` (находка /retro 2026-06-14). Поэтому при
+# расхождении канона и выведенного — громко предупреждаем и берём канон.
 if [ "$SERVER" = "local" ]; then
-    HOST_DIR="local-$(hostname -s)"
+    DERIVED_HOST_DIR="local-$(hostname -s)"
 else
-    # user@1.2.3.4   -> prod-1.2.3.4
-    # user@hostname  -> prod-hostname
-    # ssh-alias      -> prod-ssh-alias
-    HOST_IP="${SERVER#*@}"
-    HOST_DIR="prod-${HOST_IP}"
+    # user@1.2.3.4 -> prod-1.2.3.4 | user@hostname -> prod-hostname | ssh-alias -> prod-ssh-alias
+    DERIVED_HOST_DIR="prod-${SERVER#*@}"
+fi
+if [ -n "${HOST_DIR:-}" ]; then
+    [ "$HOST_DIR" != "$DERIVED_HOST_DIR" ] && \
+        echo "  [i] HOST_DIR из config='${HOST_DIR}' ≠ выведенного из SSH-target='${DERIVED_HOST_DIR}' — беру канон из config (не плодим второй каталог inventory)."
+else
+    HOST_DIR="$DERIVED_HOST_DIR"
 fi
 
 SNAPSHOT_DIR="${INVENTORY_DIR}/hosts/${HOST_DIR}/snapshots/${DATE}"
@@ -226,7 +234,7 @@ redaction_version: ${REDACTION_VERSION}
 redaction_tool: ${REDACTION_TOOL}
 METATXT
 
-# === 16 контентных файлов снимка ===
+# === 17 контентных файлов снимка (16 + health-flags.txt) ===
 
 # 1. Список контейнеров
 run_remote "containers.txt" \
@@ -272,10 +280,19 @@ run_remote "crontab.txt" \
 run_remote "nginx-sites.txt" \
     "nginx -T 2>/dev/null || (echo '--- sites-enabled ---' && ls -la /etc/nginx/sites-enabled/ 2>/dev/null && cat /etc/nginx/sites-enabled/* 2>/dev/null) || echo 'nginx не найден'"
 
-# 9. TLS-сертификаты Let's Encrypt и их даты — с set +e вокруг openssl
-#    (фикс v2: v1 валился на специальных символах в путях)
+# 9. TLS-сертификаты и их СРОКИ ВАЛИДНОСТИ через openssl — и letsencrypt, и acme.sh.
+#    Фикс /retro 2026-06-14: раньше openssl бежал только по /etc/letsencrypt/live, а
+#    для acme.sh была лишь `ls -la` (даты ФАЙЛОВ, не сертификатов) — на acme.sh-хостах
+#    срок истечения не считался вообще, хотя description обещает «даты валидности».
+#    Теперь openssl x509 -enddate прогоняется по обоим источникам. set +e — против
+#    спецсимволов в путях (фикс v2).
 run_remote "tls-certs.txt" \
-    "set +e; find /etc/letsencrypt/live -name 'cert.pem' 2>/dev/null | while read f; do echo \"=== \$f ===\"; openssl x509 -in \"\$f\" -noout -subject -dates 2>/dev/null; done; ls -la ~/.acme.sh/*/fullchain.cer 2>/dev/null | head -50; true"
+    "set +e
+     echo '=== letsencrypt (/etc/letsencrypt/live) ==='
+     find /etc/letsencrypt/live -name 'cert.pem' 2>/dev/null | while read f; do echo \"--- \$f ---\"; openssl x509 -in \"\$f\" -noout -subject -dates 2>/dev/null; done
+     echo '=== acme.sh (~/.acme.sh/*/fullchain.cer) ==='
+     for f in ~/.acme.sh/*/fullchain.cer; do [ -f \"\$f\" ] || continue; echo \"--- \$f ---\"; openssl x509 -in \"\$f\" -noout -subject -enddate 2>/dev/null; done
+     true"
 
 # 10. Список хостовых скриптов (метаданные, без содержимого)
 #     set +e + true: пустые glob'ы (/opt/*.yml, /root/bin/) дают ls ненулевой
@@ -381,6 +398,20 @@ run_remote "watchers.txt" \
      else
        echo \"\$out\"
      fi
+     true"
+
+# 17. Health-flags — готовая сводка здоровья хоста (находка /retro 2026-06-14:
+#     агент не должен грепать swap/disk/exited вручную из сырья). Агрегируем
+#     на сервере в один проход; Шаг 7 SKILL презентует это как есть.
+run_remote "health-flags.txt" \
+    "set +e
+     free | awk '/Swap:/{t=\$2;u=\$3; if(t>0) print \"swap_used_pct=\" int(u*100/t); else print \"swap_used_pct=0 (swap off)\"}'
+     df -P / | awk 'NR==2{print \"root_used_pct=\" \$5}'
+     uptime | grep -oE 'load average.*' | sed 's/load average://; s/^/loadavg=/'
+     echo \"exited_containers=\$(docker ps -aq --filter status=exited 2>/dev/null | wc -l | tr -d ' ')\"
+     echo \"oom137_containers=\$(docker ps -a --filter exited=137 --format '{{.Names}}' 2>/dev/null | tr '\\n' ' ')\"
+     echo \"apt_upgradable=\$(apt list --upgradable 2>/dev/null | grep -c upgradable)\"
+     echo \"apt_security=\$(apt list --upgradable 2>/dev/null | grep -ci security)\"
      true"
 
 # === Итог ===

@@ -36,7 +36,8 @@ inventory и выделяю drift'ы между документацией и р
 - Snapshot создан в `inventory/hosts/<host>/snapshots/YYYY-MM-DD/`
 - Snapshot содержит все ожидаемые файлы (containers, networks, volumes, host-resources,
   crontab, nginx-sites, tls-certs, host-scripts-content, host-env-redacted, cron-d-content,
-  systemd-enabled, systemd-timers, watchers, compose-files, containers-inspect.json)
+  systemd-enabled, systemd-timers, watchers, compose-files, containers-inspect.json,
+  health-flags) — проверяется по непустоте ключевых, не по суммарному размеру
 - 9 inventory-документов в `inventory/hosts/<host>/` обновлены или созданы из шаблона
   (`automations.md` — только при наличии хоть одной автоматизации)
 - Drift между inventory и реальностью явно обозначен в `drift-report.md` свежего snapshot
@@ -89,8 +90,17 @@ fi
 
 ## Шаг 2. Запуск dump-snapshot.sh
 
+**Каноничное имя папки хоста — из `infra-config.json` `servers[].alias`**, не из
+SSH-аргумента: иначе алиас `selectel` создаст `prod-selectel` вместо записанного
+`prod-82.148.28.22` и раздвоит inventory (находка /retro 2026-06-14). Резолвлю канон и
+передаю в скрипт через env `HOST_DIR` — при расхождении с SSH-target скрипт громко
+предупредит и возьмёт канон:
+
 ```bash
-bash scripts/dump-snapshot.sh "$SSH_HOST" "$SNAPSHOT_DATE"
+INFRA="$(dirname "$INVENTORY_DIR")"
+HOST_DIR="$(jq -r '.servers[0].alias // empty' "$INFRA/infra-config.json" 2>/dev/null)"
+export HOST_DIR   # пусто → скрипт выведет из SSH-target (fallback)
+bash scripts/dump-snapshot.sh "$SSH_HOST" "$SNAPSHOT_DATE" "$INVENTORY_DIR"
 ```
 
 Скрипт собирает (через single-shot SSH с timeout 10c):
@@ -102,8 +112,8 @@ bash scripts/dump-snapshot.sh "$SSH_HOST" "$SNAPSHOT_DATE"
   (`host-resources.txt`)
 - Crontab + `/etc/cron.d/*` (`crontab.txt`, `cron-d-content.txt`)
 - nginx-конфиг через `nginx -T` (`nginx-sites.txt`)
-- TLS-сертификаты Let's Encrypt — даты валидности через `openssl x509`
-  (`tls-certs.txt`)
+- TLS-сертификаты (letsencrypt + acme.sh) — **даты валидности** через `openssl x509`
+  (`tls-certs.txt`); openssl бежит по обоим источникам (фикс /retro)
 - Список и содержимое host-скриптов в `/opt/*.sh` (`host-scripts-list.txt`,
   `host-scripts-content.txt`)
 - Структура .env-файлов на хосте (имена переменных, значения redacted)
@@ -112,37 +122,63 @@ bash scripts/dump-snapshot.sh "$SSH_HOST" "$SNAPSHOT_DATE"
 - systemd-таймеры оператора — расписание наравне с cron на Ubuntu 24.04 (`systemd-timers.txt`)
 - Скрипты-наблюдатели — долгоживущие процессы inotify/fswatch/watchdog,
   слушающие события, а не запускаемые по расписанию (`watchers.txt`)
+- Готовая сводка здоровья хоста (`health-flags.txt`) — swap%, disk%, loadavg,
+  exited-контейнеры, OOM-коды 137, число отложенных apt/security-обновлений
 - Метаданные снимка (`meta.txt`)
 
-Verify: snapshot-директория не пуста, размер ≥1 МБ, есть хотя бы 16 файлов
-(было 14 + два новых: `systemd-timers.txt`, `watchers.txt`).
+**Verify по СОДЕРЖАНИЮ, не по суммарному размеру.** Малый сервер даёт снимок <1 МБ — это
+норма, а не сбой (порог «≥1 МБ» давал false-negative на валидном снимке 324 КБ — находка
+/retro). Проверяю непустоту ключевых файлов и парсинг JSON:
 
 ```bash
-SNAPSHOT_DIR="$INVENTORY_DIR/hosts/<HOST_DIR>/snapshots/$SNAPSHOT_DATE"
-[ -d "$SNAPSHOT_DIR" ] && [ "$(ls -1 "$SNAPSHOT_DIR" | wc -l)" -ge 16 ] || \
-  { echo "ОШИБКА: snapshot неполный"; exit 1; }
+SNAPSHOT_DIR="$INVENTORY_DIR/hosts/$HOST_DIR/snapshots/$SNAPSHOT_DATE"
+ok=1
+for f in containers.txt networks.txt host-resources.txt; do
+  [ -s "$SNAPSHOT_DIR/$f" ] || { echo "ОШИБКА: пустой ключевой файл $f"; ok=0; }
+done
+jq -e . "$SNAPSHOT_DIR/containers-inspect.json" >/dev/null 2>&1 \
+  || { echo "ОШИБКА: containers-inspect.json не парсится"; ok=0; }
+[ "$ok" = 1 ] || { echo "ОШИБКА: snapshot неполный"; exit 1; }
 ```
 
-Где `<HOST_DIR>` = `prod-<ip>` для удалённых или `local-<hostname>` для локальной машины.
+Где `$HOST_DIR` = канон из `infra-config.json` (`prod-<ip>` для удалённых или
+`local-<hostname>` для локальной машины).
 
 ## Шаг 3. Сравнение с существующим inventory
 
-Для каждого из 9 документов (`automations.md` — при наличии автоматизаций) сверяю
-snapshot с тем, что записано:
+Две независимые оси сравнения — **не смешивать** (находка /retro: их смешение даёт
+«мнимый drift», когда снимок просто старее обновлённого inventory):
+
+**Ось A — что изменилось на сервере** (снимок-к-снимку, стабильный источник
+`containers-inspect.json`, НЕ grep по рукописному `services.md`):
 
 ```bash
-# Контейнеры
-diff <(jq -r '.[].Name' "$SNAPSHOT_DIR/containers-inspect.json" | sort) \
-     <(grep -oE 'container_name: \S+' "$INVENTORY_DIR/hosts/<host>/services.md" | sort)
+HOSTD="$INVENTORY_DIR/hosts/$HOST_DIR"
+PREV="$(ls -1d "$HOSTD/snapshots"/*/ 2>/dev/null | sort | tail -2 | head -1)"
+diff <(jq -r '.[].Name' "$PREV/containers-inspect.json" 2>/dev/null | sed 's#^/##' | sort) \
+     <(jq -r '.[].Name' "$SNAPSHOT_DIR/containers-inspect.json"      | sed 's#^/##' | sort)
 ```
 
-Drift-категории:
-- **drift+** — есть в реальности, нет в inventory (новый сервис не задокументирован)
-- **drift-** — есть в inventory, нет в реальности (удалили, документация не обновлена)
-- **drift~** — расхождение в полях (порт, образ, статус)
+**Ось B — что не задокументировано** (реальность ↔ `services.md`). `services.md` ведёт
+контейнеры **таблицей** `| имя | … |`, поэтому проверяю присутствие каждого имени как
+ячейки, а не паттерном `container_name:` (его в формате нет — давал ложный drift на все
+контейнеры):
 
-Результат — `$SNAPSHOT_DIR/drift-report.md`. Если drift'ов нет — пишу
-«drift'ов не найдено, inventory синхронен».
+```bash
+for name in $(jq -r '.[].Name' "$SNAPSHOT_DIR/containers-inspect.json" | sed 's#^/##'); do
+  grep -qE "^\| *$name *\|" "$HOSTD/services.md" || echo "drift+ (не задокументирован): $name"
+done
+```
+
+**Тома** сверяю по ИМЕНАМ (`docker volume ls` — часть `volumes.txt` ДО строки `---`),
+не по `docker system df` (волатильные относительные даты `3 weeks ago` дают шум-diff).
+
+Drift-категории: **drift+** (есть в реальности, нет в inventory) / **drift-** (есть в
+inventory, нет в реальности) / **drift~** (расхождение полей — порт, образ, статус).
+
+Результат — `$SNAPSHOT_DIR/drift-report.md`. Нет drift'ов — пишу «drift'ов не найдено,
+inventory синхронен». **Мнимый drift** (снимок старее, чем уже обновлённый inventory)
+помечаю отдельно как объяснённый, не как реальное расхождение.
 
 ## Шаг 4. Обновление 9 inventory-документов
 
@@ -235,8 +271,12 @@ find "$INVENTORY_DIR/hosts/<host>/snapshots/" -mindepth 1 -maxdepth 1 -type d \
 
 Формирую короткий отчёт в чат:
 - Дата и путь нового snapshot
-- Размер snapshot (МБ)
-- Список drift'ов (если найдены) — с категориями + / - / ~
+- **Сводка здоровья из `health-flags.txt`** — подаю готовое (swap%, disk%, loadavg,
+  exited-контейнеры, OOM-137, отложенные apt/security-обновления), не грепаю сырьё руками
+- **Enforcement `automations.md`:** если в снимке есть автоматизации (непустые cron/
+  systemd-timers/watchers), а `inventory/hosts/$HOST_DIR/automations.md` отсутствует —
+  отдельной строкой «автоматизации есть, витрина не создана → нужен Шаг 4»
+- Список drift'ов (если найдены) — с категориями + / - / ~; мнимый drift помечен отдельно
 - Список изменённых inventory-документов
 - **Список обновлённых mermaid-диаграмм** (`diagrams/topology.mmd`, и т.д.). Если первая инвентаризация и диаграммы созданы с нуля — отметить «созданы из шаблонов». Если есть автоматизации — отдельной строкой отметить `diagrams/automations.mmd` и группу `automations` в `topology.mmd`; если автоматизаций нет — отметить, что диаграмма автоматизаций не создана (нет данных).
 - Рекомендации, если нужно: что ещё проверить вручную
@@ -262,6 +302,21 @@ rm -rf "$LOCK"   # $INVENTORY_DIR/.scan.lock — снять в конце ИЛИ
   маскирует только `=value`, но в URL вида `postgres://user:pass@host` пароль
   виден. Лечение: добавлять новые regex-паттерны при обнаружении (см.
   `references/dump-snapshot-quirks.md`).
+- **«ложный drift на все контейнеры»** — ИСПРАВЛЕНО (находка /retro 2026-06-14). Симптом:
+  Шаг 3 грепал `container_name:` по `services.md`, а тот ведёт контейнеры таблицей
+  `| имя | … |` → diff показывал «20 недокументированных». Лечение: ось A — снимок-к-снимку
+  по `containers-inspect.json`; ось B — таблично-aware проверка имени в `services.md`.
+- **«TLS-expiry не считается на acme.sh-хостах»** — ИСПРАВЛЕНО (находка /retro 2026-06-14).
+  Симптом: `tls-certs.txt` содержал только `ls -la` (даты файлов), хотя description обещает
+  «даты валидности». Причина: openssl бежал только по `/etc/letsencrypt/live`. Лечение:
+  `openssl x509 -enddate` теперь и по `~/.acme.sh/*/fullchain.cer`.
+- **«HOST_DIR из SSH-аргумента раздваивал inventory»** — ИСПРАВЛЕНО (находка /retro
+  2026-06-14). Симптом: алиас `selectel` → папка `prod-selectel` вместо записанной
+  `prod-82.148.28.22`. Лечение: канон из `infra-config.json` `servers[].alias` через env
+  `HOST_DIR`; при расхождении с SSH-target скрипт громко предупреждает и берёт канон.
+- **«verify заваливал валидный малый снимок»** — ИСПРАВЛЕНО (находка /retro 2026-06-14).
+  Симптом: порог «размер ≥1 МБ» — false-negative на снимке 324 КБ. Лечение: проверка
+  непустоты ключевых файлов + парсинг `containers-inspect.json` через jq, не суммарный размер.
 - **«секреты в containers-inspect.json»** — ИСПРАВЛЕНО (redaction v1). Скрипт
   маскирует env-секреты (`KEY=value` и креды в URL) **до записи на диск** —
   не полагаясь только на `.gitignore`. Метки в `meta.txt`: `redaction_applied: true`.
