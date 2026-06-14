@@ -621,6 +621,9 @@ XTLS Vision). Деградация только в производительн�
 - `3x-ui-panel.md` — серверная сторона, генерация subscription endpoint.
 - `3x-ui-api.md` — субскрипция через REST API, получение vless://-link
   по UUID клиента.
+- `happ-subscription-format.md` — формат мульти-кнопочной JSON-подписки Happ
+  (массив конфигов = кнопки-политики), управляющие заголовки app-management,
+  observatory-стабильность балансира, флаг-иконки/дедуп, РФ→direct.
 
 ---
 

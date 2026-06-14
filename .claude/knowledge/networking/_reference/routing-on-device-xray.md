@@ -194,4 +194,5 @@ launchctl setenv HTTP_PROXY  http://127.0.0.1:8118
 - **Xray chain-bypass для Claude Code на Mac (proxy-only):** `xray-mac-chain.md`
 - **Сценарий консультации, hub:** `vpn-consultation-flow.md`
 - **Теория протоколов:** `vpn-protocols.md`
+- **Мульти-кнопочная подписка Happ + observatory-стабильность балансира:** `happ-subscription-format.md`
 - **Скиллы:** `/configure-vpn-routing`, `/generate-client-config`

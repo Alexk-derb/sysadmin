@@ -221,4 +221,6 @@ ssh selectel 'python3 /opt/nurvpn-canon.py < /var/www/configs/<rnd>.txt'
 - `reference_happ_subscription_extraction` (память) — детали формата HAPP, заголовки, plist.
 - `project_nurvpn_subscription` (память) — конкретная подписка Василия + серверная ссылка.
 - `client-apps.md` — клиенты и `happ://routing` профили.
+- `happ-subscription-format.md` — следующий уровень: не плоское base64-зеркало, а
+  генерируемая мульти-кнопочная JSON-подписка из реестра (паттерн OpenGate).
 - `transports.md` — XHTTP/gRPC/Reality, что значат параметры vless.
