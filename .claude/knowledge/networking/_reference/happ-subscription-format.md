@@ -70,6 +70,39 @@ sources_checked:
 }
 ```
 
+## 2.1 Полная структура VLESS-outbound внутри кнопки (значения замаскированы)
+
+Самая нагруженная часть — proxy-outbound (Reality). Структура (эталон NurVPN):
+```json
+{ "tag": "us-1", "protocol": "vless",
+  "settings": { "vnext": [ {
+    "address": "<host>", "port": 443,
+    "users": [ { "id": "<uuid>", "encryption": "none", "flow": "" } ] } ] },
+  "streamSettings": {
+    "network": "tcp",                         // или "grpc" → serviceName в grpcSettings
+    "security": "reality",
+    "realitySettings": { "serverName": "<sni>", "publicKey": "<pbk>",
+                         "shortId": "<sid>", "fingerprint": "random" } } }
+```
+- Служебные: `{"tag":"direct","protocol":"freedom"}`, `{"tag":"block","protocol":"blackhole"}`.
+- Отпечаток сервера для дедупа/UPSERT в реестре — `source|host|port|sni|serviceName|network`,
+  **без `shortId`** (Reality short ID дрожит каждый запрос провайдера).
+
+## 2.2 Четыре типа кнопок-политик (различие — в routing)
+
+Все кнопки используют общий блок `inbounds` (§2) и `outbounds` = серверы своей роли +
+`direct` + `block`. Различаются только `balancers.selector` и `rules`:
+
+| Кнопка | selector | routing-логика |
+|---|---|---|
+| **USA** (нейросети) | `["us-"]` | приватка→direct, ads→block, **РФ→direct**, остальное→balancer. `observatory` 10м (стабильный US-выход). |
+| **Мир** (общий) | `["wd-","us-"]` (всё кроме bypass/ru) | то же; остальное→balancer по всему миру. Межстрановой — для веба, не для аккаунтов. |
+| **WL** (обход БС) | `["bp-"]` (только Обход/LTE, дорогие ×N) | то же; пул только маскировочных узлов. Множитель ×N — в `meta.serverDescription`. |
+| **RU** (reverse) | — (без балансира, один outbound `ru-1`) | **инверсия:** `geosite:category-ru`+`geoip:ru`→`ru-1` (через РФ-сервер); приватка→direct; **всё остальное→direct** (мимо VPN). Для «я за границей, нужны РФ-сайты». |
+
+> Префикс тега = роль (`us-N`, `wd-N`, `bp-N`, `ru-1`). `selector` в Xray ловит по префиксу,
+> поэтому именование тегов — главный рычаг состава пула (см. §5).
+
 ## 3. Управляющие HTTP-заголовки подписки (app-management)
 
 Провайдер настраивает **внешний вид и поведение** приложения заголовками ответа подписки.
@@ -126,7 +159,9 @@ sources_checked:
 - **Обычный `observatory`** (`probeUrl` + `probeInterval`) — замер раз в интервал, между
   замерами данные заморожены → `leastPing` держит один узел до следующего замера.
   **Смена сервера максимум раз в `probeInterval`.** Для стабильного выхода —
-  `probeInterval: "10m"` + `enableConcurrency: true` (быстрый прогрев).
+  `probeInterval: "10m"` + `enableConcurrency: true` (быстрый прогрев). ⚠ Это **клиентская
+  кнопка** (выход не должен скакать). Не путать с серверным observatory в `routing-server-3xui.md`,
+  где интервал короче (~30s) — там другой контекст (сервер сам балансирует, IP-стабильность сессии не та цель).
 - Вывод: **для кнопки под нейросети/аккаунты — обычный `observatory` с большим интервалом**,
   не burst. Узел-«мост через РФ» в пуле США сам станет fallback (его пинг выше, leastPing
   выберет прямой US; мост подхватится только если прямые лягут).
@@ -186,7 +221,47 @@ sources_checked:
 - **Защита крона:** при HTTP≠200 / нераспознанном формате / <N кнопок — рабочий файл НЕ
   трогать (+ `.bak`). ⚠ Грабля: переменную, которую скрипт задаёт сам (`TARGET`), объявлять
   **после** `source env` — иначе одноимённая из env перекроет (инцидент 2026-06-14).
-- Эталон реализации — `infra/scripts/vpn/opengate/` (приватная инфра оператора).
+**Схема реестра (sqlite, эскиз DDL):**
+```sql
+CREATE TABLE servers (
+  fp TEXT PRIMARY KEY,            -- отпечаток: source|host|port|sni|service_name|network (без sid)
+  source TEXT, remarks TEXT, server_desc TEXT, country TEXT,
+  role_auto TEXT, manual_override TEXT,    -- эффективная роль = manual_override ?? role_auto
+  traffic_mult TEXT,             -- '×9' / '×10' / 'Безлимит' / NULL
+  protocol TEXT, host TEXT, port INTEGER, network TEXT, security TEXT, sni TEXT, service_name TEXT,
+  config_json TEXT,              -- proxy-outbound целиком (для генератора)
+  needs_review INTEGER,          -- 1 = страна/роль не определены уверенно
+  first_seen TEXT, last_seen TEXT, alive INTEGER   -- alive=0 = пропал из последней выгрузки
+);
+```
+
+**Классификация роли** (по `remarks`: флаг-эмодзи + ключевые слова; первое совпадение):
+| Условие | role |
+|---|---|
+| «обход» / «LTE» в названии | `bypass` |
+| флаг 🇺🇸 / «United States» / «USA» | `us` |
+| флаг 🇷🇺 / «Russia» / «Россия» | `ru` |
+| иначе страна определена (любой флаг) | `world` |
+| страна не определена | `world` + `needs_review=1` (видно в отчёте, правится `manual_override`) |
+
+Страна из флага: два regional-indicator символа (U+1F1E6..U+1F1FF) → ISO-2.
+Множитель `traffic_mult` — regex `[×xXхХ]\s*(\d+)` / «безлимит» по `server_desc`.
+
+**Грабли публикации (критичные для крона):**
+- **Имя файла подписки — СТАБИЛЬНОЕ** между прогонами: случайное генерится ОДИН раз при
+  создании, дальше крон пишет в **тот же** файл. Рандом каждый прогон → ссылка протухнет у клиента.
+- **Заголовки подписки** (`routing`/`ping-type`/`profile-title`/…) ставит **nginx `add_header`
+  в `location`**, а НЕ генератор (генератор пишет только тело JSON-массива). Полный vhost —
+  в приватном inventory (`domains.md`); `routing`-заголовок с base64-профилем обновлять при
+  изменении набора гео-тегов.
+- **Порог валидации** — например ≥5 кнопок; меньше / нераспознанный формат / HTTP≠200 →
+  рабочий файл НЕ трогать + `.bak` (защита «лучше старый рабочий»).
+
+- Эталон реализации (полный рабочий код) — `infra/scripts/vpn/opengate/`
+  (`load.py`/`generate.py`/`opengate-sync.sh`) в **приватном git `vefmvai/infra`**. Для
+  воспроизведения на другом компьютере оператора: клонировать `vefmvai/infra` (код) +
+  `vefmvai/sysadmin` (этот knowledge). Для нового оператора без доступа к infra — код
+  пишется заново по этому §9 (схема + классификация + структура кнопки §2.1–2.2 даны).
 
 ## Связь с другими документами
 
