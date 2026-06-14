@@ -54,9 +54,17 @@ sysadmin-config.json
 # промежуточные отчёты) — не часть репо.
 .audit-tmp/
 
+# Сырые разборы сессий /retro — цитируют инфру оператора (IP, домены), PII.
+# В git — только обезличенный retro/BACKLOG.md и retro/README.md (ADR-0017).
+retro/reviews/
+
 # Живой слой VPN-знаний (_live, TTL 14 дней) — у каждого пользователя свой,
 # обновляется /refresh-vpn-knowledge. В git — только шаблоны *.example.md
 # и .gitkeep (задача 0.6 рефакторинга, P13: иначе у пользователя навсегда
 # грязное дерево и конфликты при обновлении мозга).
 .claude/knowledge/networking/_live/*.md
 !.claude/knowledge/networking/_live/*.example.md
+
+# Python bytecode-кэш (артефакт py_compile/импорта)
+__pycache__/
+*.pyc
