@@ -146,6 +146,44 @@ sources_checked:
   `DomainStrategy`, `FakeDNS`, `LastUpdated` (Unix-время; ⚠ именно `LastUpdated`, не
   `LastUpdatedDate` — частая ошибка в сторонних ТЗ). Конструктор профиля — routing.happ.su.
 
+### 4.1 Полный профиль-манифест OpenGate + алгоритм сборки
+
+**Манифест = объединение ВСЕХ гео-тегов из `routing.rules` всех кнопок**, разложенное по
+плоским массивам профиля. Алгоритм `generate.py`:
+- правило с `outboundTag:"direct"` → `domain`-теги в `DirectSites`, `ip`-теги в `DirectIp`;
+- правило с `balancerTag` (proxy) → `domain`→`ProxySites`, `ip`→`ProxyIp`;
+- правило с `outboundTag:"block"` → `domain`→`BlockSites`, `ip`→`BlockIp`;
+- `geosite:*` → в `*Sites`, `geoip:*` → в `*Ip`; каждый массив дедуплицировать.
+
+⚠ Манифест — про «какие секции гео оставить при iOS-нарезке», НЕ про маршрут. Поэтому
+нормально, что один тег попадёт и в Direct, и в Proxy (RU-кнопка проксирует РФ-теги, а USA/Мир
+их направляют в direct) — важно лишь, чтобы тег **присутствовал**, иначе нарезка его выкинет.
+
+Готовый профиль OpenGate (DNS/URL — пример):
+```json
+{
+  "Name": "OpenGate", "GlobalProxy": "true", "UseChunkFiles": "true",
+  "RouteOrder": "block-direct-proxy",
+  "RemoteDNSType": "DoH", "RemoteDNSDomain": "https://dns.google/dns-query", "RemoteDNSIP": "8.8.8.8",
+  "DomesticDNSType": "DoH", "DomesticDNSDomain": "https://common.dot.dns.yandex.net/dns-query", "DomesticDNSIP": "77.88.8.8",
+  "Geoipurl": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
+  "Geositeurl": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
+  "DnsHosts": {},
+  "DirectSites": ["geosite:category-ru"],
+  "DirectIp": ["geoip:private", "geoip:ru"],
+  "ProxySites": ["geosite:category-ru"],
+  "ProxyIp": ["geoip:ru"],
+  "BlockSites": ["geosite:category-ads-all"],
+  "BlockIp": [],
+  "DomainStrategy": "IPIfNonMatch", "FakeDNS": "false",
+  "LastUpdated": "1718400000"
+}
+```
+- `RouteOrder` настраивается; для OpenGate — `block-direct-proxy` (блок → РФ-директ → прокси),
+  что совпадает с семантикой Happ-профиля «Block → Direct → Proxy» (`client-apps.md` §3.6.1).
+  NurVPN в своём профиле использует `block-proxy-direct` — это его выбор, не канон.
+- `LastUpdated` (Unix) менять при смене набора тегов — иначе Happ не перекачает нарезанные базы.
+
 ## 5. Балансир: observatory vs burstObservatory (стабильность выхода)
 
 Для авто-выбора быстрейшего сервера в Xray — `routing.balancers` со `strategy.type=leastPing`,
@@ -153,15 +191,19 @@ sources_checked:
 (`["us-"]` ловит `us-1`,`us-2`,…). Правило ссылается на балансир через `balancerTag`.
 
 ⚠ **Главный практический урок (боевой, iOS, 2026-06-14):**
-- **`burstObservatory`** (с `pingConfig`) — рандомизированный **непрерывный** прозвон.
-  Даёт «живую» картинку → `leastPing` **дёргает выбор каждые несколько секунд** →
-  выходной IP скачет в пределах пула. Для нейросетей/аккаунтов это плохо (антифрод).
-- **Обычный `observatory`** (`probeUrl` + `probeInterval`) — замер раз в интервал, между
-  замерами данные заморожены → `leastPing` держит один узел до следующего замера.
-  **Смена сервера максимум раз в `probeInterval`.** Для стабильного выхода —
-  `probeInterval: "10m"` + `enableConcurrency: true` (быстрый прогрев). ⚠ Это **клиентская
-  кнопка** (выход не должен скакать). Не путать с серверным observatory в `routing-server-3xui.md`,
-  где интервал короче (~30s) — там другой контекст (сервер сам балансирует, IP-стабильность сессии не та цель).
+- **`burstObservatory`** — рандомизированный **непрерывный** прозвон. Его поле `pingConfig` —
+  штатное вложенное (⚠ не путать с устаревшим `pingConfig` ВНУТРИ обычного `observatory` — там
+  он не работает, заменён на `probeUrl`/`probeInterval`, см. `3x-ui-panel.md` §1.4). burst даёт
+  «живую» картинку → `leastPing` **дёргает выбор каждые несколько секунд** → выходной IP скачет
+  в пределах пула. Для нейросетей/аккаунтов это плохо (антифрод).
+- **Обычный `observatory`** — поля `probeUrl` + `probeInterval` + опц. `enableConcurrency`
+  (параллельный прозвон узлов → быстрый прогрев; поле из xray `observatory.html`, см.
+  sources_checked). Замер раз в интервал, между замерами данные заморожены → `leastPing` держит
+  один узел до следующего замера. **Смена сервера максимум раз в `probeInterval`.** Для
+  стабильного выхода клиентской кнопки — `probeInterval: "10m"`.
+- ⚠ Это **клиентская кнопка** (выход не должен скакать). Серверный observatory (когда балансирует
+  сам сервер) — другой контекст и интервал; канон серверного — `5m` (`3x-ui-panel.md` §1.4).
+  В `routing-server-3xui.md` §3.3 стоит `30s` — расхождение зафиксировано в `_meta/conflicts.md`.
 - Вывод: **для кнопки под нейросети/аккаунты — обычный `observatory` с большим интервалом**,
   не burst. Узел-«мост через РФ» в пуле США сам станет fallback (его пинг выше, leastPing
   выберет прямой US; мост подхватится только если прямые лягут).
@@ -212,8 +254,16 @@ sources_checked:
 крон → curl провайдера → load.py (многоформатный парсер → sqlite-реестр)
      → generate.py (кнопки-политики + профиль-манифест) → /var/www/happ/<rnd>.json (nginx)
 ```
-- **Многоформатный парсер** (каскад: сырой JSON-массив → base64(JSON) → base64(vless) →
-  plain vless) — устойчивость к смене формата провайдером (NurVPN уже менял).
+- **Многоформатный парсер** — каскад с детекцией по содержимому:
+  1) тело начинается с `[` и парсится как JSON → массив конфигов-кнопок (текущий формат NurVPN);
+  2) иначе `base64 -d` → если результат JSON-массив → тот же путь;
+  3) иначе `base64 -d` → если содержит `vless://` → список URI;
+  4) иначе тело уже содержит `vless://` построчно.
+  Для vless-веток (3,4) каждый URI парсится в proxy-outbound: query-параметры
+  `security/pbk/sid/sni/flow/type/serviceName` → `streamSettings` (маппинг — `transports.md`).
+  Ветки vless сейчас «спящие» (NurVPN отдаёт JSON), но дают устойчивость к смене формата.
+  `config_json` в реестре хранит **только proxy-outbound** каждого сервера; `inbounds`,
+  `direct`, `block` — статические шаблоны в `generate.py`, не в реестре.
 - **sqlite-реестр** (поле `source`) — мультипровайдерный: следующий провайдер = ещё один
   `ingest`. Классификация по ролям (us/world/bypass/ru) по флагу-эмодзи + названию;
   `manual_override` для ручной коррекции; `alive=0` для исчезнувших; отпечаток **без
@@ -254,8 +304,29 @@ CREATE TABLE servers (
   в `location`**, а НЕ генератор (генератор пишет только тело JSON-массива). Полный vhost —
   в приватном inventory (`domains.md`); `routing`-заголовок с base64-профилем обновлять при
   изменении набора гео-тегов.
-- **Порог валидации** — например ≥5 кнопок; меньше / нераспознанный формат / HTTP≠200 →
-  рабочий файл НЕ трогать + `.bak` (защита «лучше старый рабочий»).
+- **Порог валидации** — `MIN_BUTTONS` (напр. ≥5 кнопок) для OpenGate; меньше / нераспознанный
+  формат / HTTP≠200 → рабочий файл НЕ трогать + `.bak` (защита «лучше старый рабочий»). Не
+  путать с `MIN_SERVERS` из `subscription-mirroring.md` (порог для плоского зеркала — другая сущность).
+
+**Пример nginx `location` для подписки** (заголовки подписки ставятся ЗДЕСЬ, не генератором —
+генератор пишет только тело JSON-массива):
+```nginx
+location = /happ/og-<rnd>.json {
+    alias /var/www/happ/og-<rnd>.json;
+    default_type application/json;
+    add_header profile-title "OpenGate" always;
+    add_header ping-type "proxy" always;
+    add_header check-url-via-proxy "https://www.gstatic.com/generate_204" always;
+    add_header ping-result "time" always;
+    add_header subscriptions-sort-type "without" always;
+    add_header subscription-pin "true" always;
+    add_header routing "happ://routing/onadd/<base64-профиля-манифеста>" always;
+    add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+}
+```
+Путь `/happ/*.json` (OpenGate, JSON-кнопки) — **отдельный** от `/c/*.txt` (плоское base64-зеркало
+из `subscription-mirroring.md`); это два независимых механизма на одном домене. `routing`-заголовок
+обновлять при изменении набора гео-тегов манифеста (§4.1).
 
 - Эталон реализации (полный рабочий код) — `infra/scripts/vpn/opengate/`
   (`load.py`/`generate.py`/`opengate-sync.sh`) в **приватном git `vefmvai/infra`**. Для

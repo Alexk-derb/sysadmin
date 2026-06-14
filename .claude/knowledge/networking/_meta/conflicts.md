@@ -1,7 +1,7 @@
 ---
 knowledge_domain: vpn
 layer: meta
-last_researched: 2026-05-16
+last_researched: 2026-06-15
 ttl_days: 365
 sources_checked: []
 ---
@@ -164,6 +164,32 @@ B — в других; или появился HIGH-источник, опров
 **Дата следующей проверки:** при первом `/refresh-vpn-knowledge LAYER=live`.
 
 ---
+
+### КОНФЛИКТ-005: probeInterval серверного observatory — 30s или 5m?
+
+**Дата фиксации:** 2026-06-15
+**Где зафиксировано в базе:** `_reference/3x-ui-panel.md` §1.4, `_reference/routing-server-3xui.md` §3.3, `_reference/happ-subscription-format.md` §5
+
+**Источник A (внутренний knowledge):**
+- `_reference/3x-ui-panel.md` §1.4: `probeInterval: "5m"`, явный тезис «5m, не 30s/1m»; скилл `/configure-vpn-routing` ставит `5m` по умолчанию.
+
+**Источник B (внутренний knowledge):**
+- `_reference/routing-server-3xui.md` §3.3: `probeInterval: "30s"`.
+
+**В чём расхождение:** для серверного observatory (балансир на стороне 3X-UI) один документ канонизирует 5m (стабильный выходной IP, антифрод), другой показывает 30s. Клиентской кнопки OpenGate (10m, `happ-subscription-format.md` §5) это не касается — там свой контекст.
+
+**Возможные объяснения:**
+- `routing-server-3xui` §3.3 отстал: 30s — раннее значение, канон сместился к 5m после урока про стабильность IP (`project_vpn_routing_student_ux`).
+- Разные цели: 30s — быстрый отклик на падение узла; 5m — стабильность выхода (для нейросетей нужен 5m).
+
+**Текущее решение в базе:**
+- [x] помечено `? уточнить` — `happ` §5 ссылается на канон 5m (`3x-ui-panel` §1.4); `routing-server-3xui` §3.3 требует ревизии 30s→5m.
+
+**Что прояснит:** ревизия `routing-server-3xui` §3.3 — привести к 5m или явно обосновать 30s в его контексте.
+
+**Дата следующей проверки:** при первом `/refresh-vpn-knowledge LAYER=reference`.
+
+**Связанная путаница (`pingConfig`):** `pingConfig` устарел ВНУТРИ `observatory` (заменён `probeUrl`/`probeInterval`, `3x-ui-panel` §1.4), но штатен ВНУТРИ `burstObservatory` (`happ` §5). Это разные модули, не противоречие — разведено в `happ-subscription-format.md` §5.
 
 ---
 
