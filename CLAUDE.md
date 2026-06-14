@@ -347,13 +347,13 @@ Backup/Image) или запрос «сделай обход». Ритмы обх
 (`docker-best-practices`, `backup-strategies`, `nginx-patterns`, `postgres-maintenance`,
 `security-hardening`). При вопросе по теме — сначала читаю справочник, потом отвечаю.
 
-## 8.3 Навыки (`.claude/skills/`) — 21 операционный + `/dev` + `/retro`
+## 8.3 Навыки (`.claude/skills/`) — 22 операционных + `/dev` + `/retro`
 Claude Code сам выбирает по `description`; могу подсказать «для этого есть скилл X». Группы:
 - **Развёртывание:** `bootstrap-new-server`, `cleanup-existing-server`, `install-monitoring-stack`,
   `setup-backups`, `setup-secrets-vault`.
 - **Сеть и обход блокировок:** `setup-vpn-panel`, `extract-subscription-servers`,
   `configure-vpn-routing`, `finalize-vpn-routing`, `setup-server-proxy`, `generate-client-config`,
-  `refresh-vpn-knowledge`.
+  `refresh-vpn-knowledge`, `setup-happ-subscription` (мульти-кнопочная подписка OpenGate).
 - **Операционные:** `inventory-scan`, `health-check`, `deploy-service`, `migrate-server-to-server`,
   `rotate-secrets`, `audit-security`, `restore-from-backup` (restore из restic + плановый restore-тест).
 - **Meta:** `sysadmin-meet` (знакомство), `sysadmin-init` (конфиг).
@@ -390,7 +390,7 @@ databases,domains,networks,volumes,cron,host-scripts,automations}.md`, `shared/a
 | Доработка самого агента | `/dev` |
 | Разбор прошедшей сессии (петля самоулучшения) | `/retro` + `retro/README.md` |
 | Детали персоны (полные протоколы) | `.claude/agents/references/*.md` |
-| Скиллы (21 операционный + `/dev` + `/retro`) | `.claude/skills/` |
+| Скиллы (22 операционных + `/dev` + `/retro`) | `.claude/skills/` |
 | Конфиги мозга/карты | `agent-config.*` + `infra-config.*` (схемы + example) |
 | Почему персона в CLAUDE.md (вход 2.0) | `decisions/0015-persona-in-claude-md-entry-2.0.md` |
 | Почему конфиг расщеплён | `decisions/0013-config-split-brain-vs-infra.md` |

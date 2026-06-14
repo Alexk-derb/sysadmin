@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Шаблон крон-синка мульти-кнопочной Happ-подписки (паттерн OpenGate).
+# Адаптируй: PROVIDER, путь env с секретами, TARGET, MIN_BUTTONS.
+# Защита: при ЛЮБОЙ ошибке (HTTP≠200, нераспознанный формат, падение генератора,
+# <MIN_BUTTONS кнопок) рабочий файл НЕ трогается + .bak — «лучше старый рабочий».
+set -uo pipefail
+
+DIR=/opt/opengate                       # где лежат load.py / generate.py / registry.db
+PROVIDER=nurvpn
+MIN_BUTTONS=5
+# Секреты SUB_URL, HWID — из отдельного env (600 root). НЕ хардкодить здесь.
+. /opt/opengate/sync.env                # SUB_URL, HWID
+# ⚠ TARGET задаём ПОСЛЕ source — иначе одноимённая переменная из env перекроет (боевой инцидент).
+TARGET=/var/www/happ/og-CHANGEME.json   # СТАБИЛЬНОЕ имя (рандом один раз при создании)
+
+ts() { date '+%Y-%m-%d %H:%M:%S'; }
+
+TMP=$(mktemp)
+code=$(curl -sS -o "$TMP" -w '%{http_code}' --max-time 40 \
+  -H "User-Agent: Happ/4.9.0" -H "X-Hwid: $HWID" \
+  -H "X-Device-Os: macOS" -H "X-Device-Locale: ru" "$SUB_URL" 2>/dev/null || echo 000)
+if [ "$code" != "200" ]; then
+  echo "$(ts) ERROR: HTTP $code от провайдера — пропуск, файл не трогаю"; rm -f "$TMP"; exit 0
+fi
+
+if ! python3 "$DIR/load.py" ingest --source "$PROVIDER" --db "$DIR/registry.db" "$TMP" >/dev/null 2>&1; then
+  echo "$(ts) ERROR: load.py не распознал ответ — реестр/файл не трогаю"; rm -f "$TMP"; exit 0
+fi
+rm -f "$TMP"
+
+OUT=$(mktemp)
+if ! python3 "$DIR/generate.py" --db "$DIR/registry.db" --out "$OUT" >/dev/null 2>&1; then
+  echo "$(ts) ERROR: generate.py упал — файл не трогаю"; rm -f "$OUT"; exit 0
+fi
+if ! python3 -c "import json,sys;d=json.load(open('$OUT'));sys.exit(0 if isinstance(d,list) and len(d)>=$MIN_BUTTONS else 1)" 2>/dev/null; then
+  echo "$(ts) ERROR: результат невалиден (<$MIN_BUTTONS кнопок) — файл не трогаю"; rm -f "$OUT"; exit 0
+fi
+N=$(python3 -c "import json;print(len(json.load(open('$OUT'))))" 2>/dev/null)
+
+[ -f "$TARGET" ] && cp -f "$TARGET" "$TARGET.bak"
+cp -f "$OUT" "$TARGET.new"; chown www-data:www-data "$TARGET.new"; chmod 644 "$TARGET.new"
+mv -f "$TARGET.new" "$TARGET"           # атомарная замена (mv на той же ФС)
+rm -f "$OUT"
+echo "$(ts) OK: $N кнопок → $TARGET"
