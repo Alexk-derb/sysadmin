@@ -10,7 +10,7 @@
   generate.py --db registry.db --out sub.json
   generate.py --db registry.db --only USA --out proto.json
 """
-import json, base64, argparse, sqlite3
+import json, base64, argparse, sqlite3, hashlib
 
 PING_DEST = "https://www.gstatic.com/generate_204"
 # Обычный observatory (НЕ burst): замер раз в OBS_INTERVAL, между замерами leastPing держит
@@ -98,6 +98,15 @@ def manual_button(rem, mult, cfg):
 
 
 def profile_manifest():
+    direct_sites = GEO_DIRECT_SITE
+    # LastUpdated (Unix-строка, ИМЕННО LastUpdated — не LastUpdatedDate) обязателен: при смене
+    # набора direct/proxy/block-тегов Happ перекачивает нарезанные базы только если значение
+    # изменилось (knowledge happ-subscription-format §4.1). Привязываем к ХЕШУ набора тегов, а
+    # не к wall-clock: меняется ровно когда меняется набор (детерминизм + нет лишних перекачек
+    # баз при крон-генерациях, где сменились только серверы, но не теги маршрутизации).
+    tag_blob = json.dumps([direct_sites, GEO_DIRECT_IP, GEO_BLOCK_SITE,
+                           ["geoip:ru"]], ensure_ascii=False, sort_keys=True)
+    last_updated = str(int(hashlib.sha256(tag_blob.encode()).hexdigest()[:8], 16))
     return {
         "Name": "OpenGate", "GlobalProxy": "true", "UseChunkFiles": "true",
         "RouteOrder": "block-direct-proxy",
@@ -107,10 +116,11 @@ def profile_manifest():
         "Geoipurl": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
         "Geositeurl": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
         "DnsHosts": {},
-        "DirectSites": GEO_DIRECT_SITE, "DirectIp": GEO_DIRECT_IP,
+        "DirectSites": direct_sites, "DirectIp": GEO_DIRECT_IP,
         "ProxySites": GEO_DIRECT_SITE, "ProxyIp": ["geoip:ru"],
         "BlockSites": GEO_BLOCK_SITE, "BlockIp": [],
         "DomainStrategy": "IPIfNonMatch", "FakeDNS": "false",
+        "LastUpdated": last_updated,
     }
 
 
