@@ -68,3 +68,5 @@ retro/reviews/
 # Python bytecode-кэш (артефакт py_compile/импорта)
 __pycache__/
 *.pyc
+# Артефакты Playwright MCP (снапшоты/логи браузерной диагностики) — не часть мозга
+.playwright-mcp/
