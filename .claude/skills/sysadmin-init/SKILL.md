@@ -464,10 +464,28 @@ jq -r '.secrets.manager' "$BRAIN_PATH"        # пример агент-поля
 jq -r '.servers[0].role' "$INFRA_CONFIG_PATH" # пример инфра-поля (Раунд 3)
 ```
 
-После всех раундов — Шаги 8→9→10 (+10.6 самопроверка обязательна и здесь: после правок
-оба конфига должны остаться рабочими). **НЕ затираю:** блок `meta` мозга и уже выставленные
-VPN-поля (`panel_url`, `panel_web_base_path` — их заполняют VPN-скиллы) — переношу текущие
-значения в draft перед записью.
+**Запись reconfigure = merge-patch поверх ТЕКУЩЕГО конфига, НЕ пересборка из skeleton (ADR-0018).**
+`assemble-configs.sh` рассчитан на первичный setup (v1.0: один проект/сервер) — на reconfigure он
+**затирает** доп. проекты в мозге (`projects[1+]`), доп. серверы (`servers[1+]`) и опц. блоки карты,
+не переданные флагами (`vpn`, `map`, `meta`). Поэтому изменённые ключи накатываю на текущий файл
+**точечным jq-патчем** через `scripts/reconfigure-write.sh` (backup → jq → штатная валидация
+`validate-config.sh` → write или громкий откат). Всё нетронутое сохраняется автоматически —
+отдельно «переносить `meta`/VPN-поля» не нужно.
+
+```bash
+# Пример: включить бэкап на свой сервер, не трогая остальную карту (в т.ч. блок vpn).
+bash "$SYSADMIN_ROOT/.claude/skills/sysadmin-init/scripts/reconfigure-write.sh" \
+  infra "$INFRA_CONFIG_PATH" \
+  '.backups = {enabled:true, destination:"remote-sftp", remote_host:"iiservertim:/backup/srv-spb-restic", retention:{daily:7,weekly:4,monthly:6}}'
+
+# Пример (мозг): переименовать ОДИН проект, сохранив весь массив projects[].
+bash "$SYSADMIN_ROOT/.claude/skills/sysadmin-init/scripts/reconfigure-write.sh" \
+  agent "$BRAIN_PATH" '(.projects[] | select(.id=="srv-spb-selectel")).title = "Новое имя"'
+```
+
+Несколько изменённых блоков — патчи можно накатывать последовательно (каждый со своей валидацией
+и `.bak`) или объединить в один jq-фильтр. После всех правок — Шаг 10.6 (самопроверка
+`self-test-setup.sh`): оба конфига обязаны остаться валидными и рабочими.
 
 # Граничные случаи и грабли
 
