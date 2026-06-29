@@ -68,13 +68,18 @@
         },
         "destination": {
           "type": "string",
-          "enum": ["yandex-disk-webdav", "nextcloud-webdav", "owncloud-webdav", "s3", "b2", "local"],
-          "description": "Куда складываются бэкапы. *-webdav — облачные хранилища через WebDAV (требуют rclone-remote). s3 — Amazon S3 или совместимое. b2 — Backblaze B2. local — локально на сервере (только для тестов!)."
+          "enum": ["yandex-disk-webdav", "nextcloud-webdav", "owncloud-webdav", "s3", "b2", "remote-sftp", "local"],
+          "description": "Куда складываются бэкапы. *-webdav — облачные хранилища через WebDAV (требуют rclone-remote). s3 — Amazon S3 или совместимое. b2 — Backblaze B2. remote-sftp — свой удалённый сервер по SSH: либо restic sftp-backend (push с этого сервера), либо pull-схема (restic на сервере-приёмнике сам тянет данные по SSH; репозиторий живёт на приёмнике). Указатель на цель — в remote_host; для 152-ФЗ сервер-приёмник должен быть в РФ. local — локально на сервере (только для тестов!)."
         },
         "rclone_remote": {
           "type": "string",
           "minLength": 1,
           "description": "Имя rclone-remote'а из ~/.config/rclone/rclone.conf (для webdav-destination'ов). Например, yadisk-backup. ОБЯЗАТЕЛЬНО при destination=*-webdav."
+        },
+        "remote_host": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Указатель на сервер-приёмник бэкапа для destination=remote-sftp: SSH-алиас или host:path (например, iiservertim:/backup/srv-spb-restic). Только указатель, БЕЗ секретов — ключи, forced-command, расписание и restore-процедура описываются в runbook/inventory. Опционально (для документирования; источник правды деталей — runbook)."
         },
         "retention": {
           "type": "object",

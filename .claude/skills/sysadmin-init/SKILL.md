@@ -232,7 +232,7 @@ bash "$SYSADMIN_ROOT/.claude/skills/sysadmin-init/scripts/migrate-legacy.sh" \
 | 2. Менеджер паролей | `secrets.{manager,manager_name,cli_available}` | мозг | СЕНЬОР — `wizard-flow.md` §«Раунд 2» |
 | 3. Сервер | `servers[0].{alias,ssh_alias,role,domain?}` | карта | лёгкая |
 | 4. Мониторинг | `monitoring.{enabled,stack,panel_domain}` | карта | СЕНЬОР — `wizard-flow.md` §«Раунд 4» |
-| 5. Бэкапы | `backups.{enabled,destination,retention,rclone_remote?}` | карта | СЕНЬОР — `wizard-flow.md` §«Раунд 5» |
+| 5. Бэкапы | `backups.{enabled,destination,retention,rclone_remote?,remote_host?}` | карта | СЕНЬОР — `wizard-flow.md` §«Раунд 5» |
 | 6. Telegram | `notifications.telegram.{enabled,bot_username,chat_type}` | карта | лёгкая |
 | 6.5. VPN | `vpn.*` (флаги, заполнят VPN-скиллы) | карта | лёгкая |
 
@@ -258,8 +258,9 @@ Bitwarden») — полностью в `wizard-flow.md` §«Другой мен�
 (uptime-kuma+beszel) / полный (+dozzle+dockge+diun, ★ для production).
 
 **Раунд 5 (бэкапы).** `enabled` → `destination` (enum: `yandex-disk-webdav` для РФ /
-`s3`/`b2` / `nextcloud-webdav` / `local`(не советую)), `rclone_remote` (для webdav-вариантов,
-regex `^[a-zA-Z][a-zA-Z0-9_-]+$`), `retention`. **⚠️ `retention` — ОБЪЕКТ `{daily,weekly,
+`s3`/`b2` / `nextcloud-webdav` / `remote-sftp` (свой сервер по SSH, ADR-0017) / `local`(не советую)),
+`rclone_remote` (для webdav-вариантов, regex `^[a-zA-Z][a-zA-Z0-9_-]+$`), `remote_host` (опц., для
+`remote-sftp` — указатель host:path, без секретов), `retention`. **⚠️ `retention` — ОБЪЕКТ `{daily,weekly,
 monthly}` (целые), НЕ строка** (схема `additionalProperties:false`). Дефолт `{daily:7,
 weekly:4,monthly:6}` (можно описать как «7д-4н-6м», но в конфиг пишется объектом).
 

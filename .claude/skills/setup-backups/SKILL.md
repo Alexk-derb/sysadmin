@@ -120,8 +120,9 @@ BACKUP_PASS_REF="${BACKUP_PASS_REF:-$BACKUP_PASS_REF_FROM_CONFIG}"
 
 | Параметр | Default | Описание |
 |----------|---------|----------|
-| `BACKUP_DESTINATION` | (из `infra-config.json`: `backups.destination`) | `s3` / `b2` / `yandex-disk-webdav` / `nextcloud-webdav` / `owncloud-webdav` / `local` |
+| `BACKUP_DESTINATION` | (из `infra-config.json`: `backups.destination`) | `s3` / `b2` / `yandex-disk-webdav` / `nextcloud-webdav` / `owncloud-webdav` / `remote-sftp` / `local` |
 | `RCLONE_REMOTE` | (из `infra-config.json`: `backups.rclone_remote` — для webdav) | Имя rclone-remote из `~/.config/rclone/rclone.conf` |
+| `BACKUP_REMOTE_HOST` | (из `infra-config.json`: `backups.remote_host` — для remote-sftp) | SSH-host:path приёмника (напр. `iiservertim:/backup/srv-spb-restic`). Только push-вариант; pull — см. ниже |
 | `BACKUP_USER` | (required для webdav) | WebDAV username (берётся из менеджера паролей при выполнении) |
 | `BACKUP_PASS_REF` | (из `agent-config.json`: `secrets.manager` + конвенция индекса) | Ссылка на passphrase в менеджере паролей |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | (required для s3, из менеджера паролей) | S3 credentials |
@@ -173,7 +174,8 @@ case "$BACKUP_DESTINATION" in
   s3)     export RESTIC_REPOSITORY="s3:s3.amazonaws.com/$BACKUP_BUCKET/$RESTIC_REPO_PATH" ;;
   b2)     export RESTIC_REPOSITORY="b2:$BACKUP_BUCKET:$RESTIC_REPO_PATH" ;;
   webdav) export RESTIC_REPOSITORY="rclone:$RCLONE_REMOTE:$RESTIC_REPO_PATH" ;;  # Яндекс.Диск / NextCloud / ownCloud
-  *) echo "ERROR: BACKUP_DESTINATION не задан или неизвестен (s3/b2/webdav)" >&2; exit 2 ;;
+  remote-sftp) export RESTIC_REPOSITORY="sftp:$BACKUP_REMOTE_HOST/$RESTIC_REPO_PATH" ;;  # свой сервер по SSH (PUSH). Pull-схему скилл не разворачивает — см. ниже.
+  *) echo "ERROR: BACKUP_DESTINATION не задан или неизвестен (s3/b2/webdav/remote-sftp)" >&2; exit 2 ;;
 esac
 
 # Инициализация (только один раз!)
@@ -298,6 +300,15 @@ docker rm -f pg-restore-test
 | Backblaze B2 | `b2:<bucket>:backups/infra` | `B2_ACCOUNT_ID` + `B2_ACCOUNT_KEY` в env |
 | WebDAV (Я.Диск / NextCloud / ownCloud) | `rclone:<remote>:backups/infra` | `rclone config` создать remote (тип webdav, endpoint провайдера — например, `https://webdav.yandex.ru` для Я.Диска) |
 | S3-совместимое (MinIO / Wasabi / Yandex Object Storage) | `s3:<endpoint>/<bucket>/backups/infra` | `AWS_*` env с подменённым endpoint |
+| Свой сервер по SSH — `remote-sftp` (PUSH) | `sftp:<ssh-host>:backups/infra` | SSH-доступ к приёмнику (ключ в `~/.ssh/config`); приёмник в РФ для 152-ФЗ. `backups.remote_host` в конфиге — указатель |
+
+> **`remote-sftp` и pull-схема.** Штатный поток выше — **push**: этот сервер сам пишет в restic
+> sftp-backend на приёмнике. Бывает и **pull** (приёмник сам тянет данные по SSH, репозиторий
+> живёт на приёмнике, forced-command ключ закрывает доступ) — она надёжнее, когда источник —
+> публичный сервер с ПД, а приёмник за NAT. **Pull этот скилл НЕ разворачивает автоматически:**
+> в конфиге она тоже фиксируется как `destination=remote-sftp` + `remote_host`, а сама связка
+> (дамп-скрипт, ключ, таймеры, алерт, restore-тест) настраивается вручную по runbook. Живой
+> пример — бэкап `srv-spb-selectel` → `iiservertim` (pull через WireGuard), см. ADR-0017.
 
 # Failed Attempts (граблекейс)
 

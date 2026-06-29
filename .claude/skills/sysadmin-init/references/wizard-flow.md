@@ -262,6 +262,7 @@ hostname (regex `^[a-z0-9.-]+$`).
 | `s3`                 | Надёжнее всего, неограниченный объём           | Платно (~$0.02/ГБ/мес AWS)      |
 | `b2` (Backblaze)     | Дешевле S3 в 4 раза, тот же API                | Меньшая распространённость      |
 | `nextcloud-webdav`   | Свой self-hosted (полный контроль)             | Сам поднимаешь Nextcloud-сервер |
+| `remote-sftp`        | Свой второй сервер по SSH (бесплатно, в РФ → 152-ФЗ); push или pull | Нужен второй свой сервер; pull-схему `/setup-backups` не разворачивает сам (вручную по runbook) |
 | `local`              | Бэкап на тот же хост (быстро, бесплатно)       | НЕ offsite, теряешь при пожаре  |
 
 **4. Рекомендация.**
@@ -284,6 +285,9 @@ hostname (regex `^[a-z0-9.-]+$`).
 - `backups.rclone_remote` (если destination — webdav-вариант): имя
   remote'а в `~/.config/rclone/rclone.conf` (например `yandex-disk`).
   Валидация: regex `^[a-zA-Z][a-zA-Z0-9_-]+$`.
+- `backups.remote_host` (опц., если destination=`remote-sftp`): указатель на
+  приёмник — SSH-host:path (например `iiservertim:/backup/srv-spb-restic`). Без
+  секретов; детали (ключ, forced-command, расписание) — в runbook. См. ADR-0017.
 - `backups.retention` (text, default `7d-4w-6m` — 7 дней, 4 недели,
   6 месяцев). Подсказка: «Стандарт индустрии. Можешь оставить или ввести
   свой формат `Nd-Nw-Nm-Ny`.»

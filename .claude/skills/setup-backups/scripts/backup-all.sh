@@ -10,7 +10,7 @@
 #   MYSQL_CONTAINERS=""
 #   REDIS_CONTAINERS="<your-redis-container>"           # ПРИМЕР
 #   RESTIC_REPOSITORY="s3:s3.amazonaws.com/<bucket>/backups/infra"  # ПРИМЕР, варианты:
-#                  # s3:..., b2:<bucket>:..., rclone:<webdav-remote>:...
+#                  # s3:..., b2:<bucket>:..., rclone:<webdav-remote>:..., sftp:<ssh-host>:... (remote-sftp)
 #   RESTIC_PASSWORD_FILE="/root/.restic-password"
 #   BACKUP_DIR="/opt/backups/dbs"
 #   RETENTION_DAYS=7

@@ -11,7 +11,8 @@
 #   SRV_ALIAS=... SRV_SSH=... SRV_ROLE=production \
 #   [MON_ENABLED=true MON_STACK_JSON='["uptime-kuma","beszel"]' MON_PANEL_DOMAIN=...] \
 #   [BACKUPS_ENABLED=true BACKUPS_DESTINATION=yandex-disk-webdav \
-#     BACKUPS_RETENTION_JSON='{"daily":7,"weekly":4,"monthly":6}' BACKUPS_RCLONE_REMOTE=yandex-disk] \
+#     BACKUPS_RETENTION_JSON='{"daily":7,"weekly":4,"monthly":6}' BACKUPS_RCLONE_REMOTE=yandex-disk \
+#     BACKUPS_REMOTE_HOST=iiservertim:/backup/srv-spb-restic] \
 #   [TG_ENABLED=true TG_BOT_USERNAME=mybot TG_CHAT_TYPE=personal] \
 #   [VPN_ENABLED=true [VPN_REALITY_DEST=www.cloudflare.com]] \
 #   assemble-configs.sh <workdir> [<sysadmin_root>]
@@ -106,6 +107,9 @@ if [ "${BACKUPS_ENABLED:-false}" = "true" ]; then
     # rclone_remote — для webdav-destination'ов.
     [ -n "${BACKUPS_RCLONE_REMOTE:-}" ] && { jq --arg rr "$BACKUPS_RCLONE_REMOTE" \
         '.backups.rclone_remote=$rr' "$INFRA_DRAFT" > "$_x" && _apply "$INFRA_DRAFT"; }
+    # remote_host — указатель на сервер-приёмник для destination=remote-sftp (опц., без секретов).
+    [ -n "${BACKUPS_REMOTE_HOST:-}" ] && { jq --arg rh "$BACKUPS_REMOTE_HOST" \
+        '.backups.remote_host=$rh' "$INFRA_DRAFT" > "$_x" && _apply "$INFRA_DRAFT"; }
 fi
 
 # notifications.telegram (только при enabled=true)
