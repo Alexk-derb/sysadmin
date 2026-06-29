@@ -308,7 +308,7 @@ docker rm -f pg-restore-test
 > публичный сервер с ПД, а приёмник за NAT. **Pull этот скилл НЕ разворачивает автоматически:**
 > в конфиге она тоже фиксируется как `destination=remote-sftp` + `remote_host`, а сама связка
 > (дамп-скрипт, ключ, таймеры, алерт, restore-тест) настраивается вручную по runbook. Живой
-> пример — бэкап `srv-spb-selectel` → `iiservertim` (pull через WireGuard), см. ADR-0017.
+> пример — бэкап `srv-spb-selectel` → `iiservertim` (pull через WireGuard), см. ADR-0018.
 
 # Failed Attempts (граблекейс)
 
