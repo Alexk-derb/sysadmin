@@ -76,9 +76,9 @@ NurVPN с РФ-сервера отдаёт нормально (проверен�
 
 ## Часть 2. Положить список на свой сервер как ссылку-подписку
 
-Нужен веб-сервер, отдающий статичный файл по HTTPS. У нас на `prod-82.148.28.22`
-уже есть готовый механизм: nginx `location /c/` → `alias /var/www/configs/` на домене
-`news.vefmvtech.ru` (vhost `opengate`). Файлы там же, где другие конфиги.
+Нужен веб-сервер, отдающий статичный файл по HTTPS. Типовой готовый механизм:
+nginx `location /c/` → `alias /var/www/configs/` на своём домене (например
+`news.example.com`, vhost `opengate`). Файлы там же, где другие конфиги.
 
 ```nginx
 # фрагмент vhost (уже существует):
@@ -95,15 +95,15 @@ location /c/ {
 FNAME="$(python3 -c 'import secrets;print(secrets.token_urlsafe(12).replace("-","").replace("_","")[:16])').txt"
 
 # 2. Заливаем сам base64-ответ (формат уже правильный, ничего не переупаковываем):
-scp sub.b64 selectel:/var/www/configs/$FNAME
-ssh selectel "chown www-data:www-data /var/www/configs/$FNAME && chmod 644 /var/www/configs/$FNAME"
+scp sub.b64 srv-a:/var/www/configs/$FNAME
+ssh srv-a "chown www-data:www-data /var/www/configs/$FNAME && chmod 644 /var/www/configs/$FNAME"
 
 # 3. Проверяем отдачу:
 curl -sS -o /dev/null -w 'HTTP %{http_code} type=%{content_type}\n' \
-  https://news.vefmvtech.ru/c/$FNAME
+  https://news.example.com/c/$FNAME
 ```
 
-**Готовая ссылка** вида `https://news.vefmvtech.ru/c/<rnd>.txt` добавляется в Happ
+**Готовая ссылка** вида `https://news.example.com/c/<rnd>.txt` добавляется в Happ
 (и в любой клиент: sing-box, v2rayN, Streisand) **как обычная подписка** — `+` →
 вставить ссылку. HWID-привязки и лимита устройств нет.
 
@@ -155,12 +155,12 @@ sha256. Такой хеш стабилен между запросами и ме
 
 ```bash
 # скрипты
-scp infra/scripts/vpn/nurvpn-sync.sh  selectel:/opt/nurvpn-sync.sh
-scp infra/scripts/vpn/nurvpn-canon.py selectel:/opt/nurvpn-canon.py
-ssh selectel 'chmod 755 /opt/nurvpn-sync.sh /opt/nurvpn-canon.py'
+scp infra/scripts/vpn/nurvpn-sync.sh  srv-a:/opt/nurvpn-sync.sh
+scp infra/scripts/vpn/nurvpn-canon.py srv-a:/opt/nurvpn-canon.py
+ssh srv-a 'chmod 755 /opt/nurvpn-sync.sh /opt/nurvpn-canon.py'
 
 # env (заполнить реальными значениями, на сервере)
-ssh selectel 'cat > /opt/nurvpn-sync.env << EOF
+ssh srv-a 'cat > /opt/nurvpn-sync.env << EOF
 SUB_URL="https://subs.nurvpn.com/<token>"
 HWID="<hwid>"
 TARGET="/var/www/configs/<rnd>.txt"
@@ -170,10 +170,10 @@ EOF
 chmod 600 /opt/nurvpn-sync.env'
 
 # cron раз в час (на :37, чтобы не толкаться с бэкапами в :00-:10)
-ssh selectel '(crontab -l 2>/dev/null; echo "37 * * * * /opt/nurvpn-sync.sh >> /var/log/nurvpn-sync.log 2>&1") | crontab -'
+ssh srv-a '(crontab -l 2>/dev/null; echo "37 * * * * /opt/nurvpn-sync.sh >> /var/log/nurvpn-sync.log 2>&1") | crontab -'
 
 # logrotate
-ssh selectel 'cat > /etc/logrotate.d/nurvpn-sync << EOF
+ssh srv-a 'cat > /etc/logrotate.d/nurvpn-sync << EOF
 /var/log/nurvpn-sync.log { su root root weekly rotate 4 compress missingok notifempty copytruncate }
 EOF'
 ```
@@ -196,10 +196,10 @@ EOF'
 ### Диагностика
 
 ```bash
-ssh selectel 'tail -20 /var/log/nurvpn-sync.log'        # история синков
-ssh selectel '/opt/nurvpn-sync.sh; tail -1 /var/log/nurvpn-sync.log'  # ручной прогон
+ssh srv-a 'tail -20 /var/log/nurvpn-sync.log'        # история синков
+ssh srv-a '/opt/nurvpn-sync.sh; tail -1 /var/log/nurvpn-sync.log'  # ручной прогон
 # канон текущего файла vs свежего ответа (должны совпадать, если изменений нет):
-ssh selectel 'python3 /opt/nurvpn-canon.py < /var/www/configs/<rnd>.txt'
+ssh srv-a 'python3 /opt/nurvpn-canon.py < /var/www/configs/<rnd>.txt'
 ```
 
 ---

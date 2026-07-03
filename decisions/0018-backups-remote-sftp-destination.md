@@ -11,10 +11,10 @@
 `owncloud-webdav`, `s3`, `b2`, `local`. Схема (`allOf`) требует `destination` при
 `backups.enabled=true`.
 
-- На проекте `srv-spb-selectel` развёрнут реальный offsite-бэкап трёх SQLite-баз
-  (`digest`/`prianiki`/`prod`) на **свой второй сервер `iiservertim`** (РФ, диск `/backup`):
-  restic-репозиторий на приёмнике, **pull-модель** (iiservertim тянет дамп с SPb по
-  forced-command ключу через WireGuard). Это реальный, проверенный (restore-тест) бэкап.
+- На проекте `srv-main` развёрнут реальный offsite-бэкап нескольких SQLite-баз
+  на **свой второй сервер `backup-host`** (РФ, диск `/backup`):
+  restic-репозиторий на приёмнике, **pull-модель** (backup-host тянет дамп с основного
+  сервера по forced-command ключу через WireGuard). Это реальный, проверенный (restore-тест) бэкап.
 - **Ни одно значение enum не описывает этот кейс честно:** `local` по смыслу схемы — «на том
   же сервере, только для тестов» (у нас offsite на другой машине); `s3`/`b2`/`*-webdav` —
   облачные провайдеры, которых нет. Вписать любое = выдумать неподтверждённые данные
@@ -31,7 +31,7 @@
 сервер по SSH»: покрывает и restic sftp-backend (push с сервера), и pull-схему (restic на
 сервере-приёмнике тянет данные по SSH; репозиторий живёт на приёмнике). Для указания цели
 вводим **опциональное** поле `backups.remote_host` (SSH-алиас или `host:path`, например
-`iiservertim:/backup/srv-spb-restic`) — только указатель, без секретов; полные детали
+`backup-host:/backup/srv-main-restic`) — только указатель, без секретов; полные детали
 (ключи, forced-command, расписание, restore) остаются в runbook/inventory.
 
 `remote_host` сделан **необязательным** (в отличие от `rclone_remote`, обязательного для
@@ -43,10 +43,10 @@ webdav): источник правды деталей бэкапа — runbook, 
 
 - ✅ `backups.enabled=true` можно выставить честно для серверов с бэкапом на своё железо
   (частый self-hosted кейс, и единственный совместимый с 152-ФЗ способ — приёмник в РФ).
-- ✅ Никакой лжи в конфиге (C.2): `remote-sftp` точно описывает реальность `srv-spb-selectel`.
+- ✅ Никакой лжи в конфиге (C.2): `remote-sftp` точно описывает реальность `srv-main`.
 - ✅ `remote_host` даёт самодокументируемый указатель «куда уходят копии», не раскрывая секретов.
 - ⚠️ Штатный `/setup-backups` автоматизирует restic sftp-backend (push); **pull-вариант**
-  (как на srv-spb) скилл не разворачивает сам — он настраивается вручную по runbook, а конфиг
+  (как на srv-main) скилл не разворачивает сам — он настраивается вручную по runbook, а конфиг
   лишь фиксирует факт. Это отражено в `setup-backups/SKILL.md`.
 - ⚠️ Добавлено значение enum и поле — обновлены потребители: `setup-backups/SKILL.md`,
   `sysadmin-init` (wizard-flow Раунд 5 + SKILL.md + assemble-configs.sh). Рассинхрон enum
@@ -56,5 +56,5 @@ webdav): источник правды деталей бэкапа — runbook, 
 
 - Связан с ADR-0013 (расщепление конфига: мозг vs карта инфры) — правим карту-схему.
 - Влияет на: `infra-config.schema.json`, `infra-config.example.json`, скиллы
-  `setup-backups`, `sysadmin-init`. Реализация на `srv-spb-selectel` — runbook
-  `2026-06-29-srv-spb-backup-on-iiservertim.md` (в приватной инфре оператора).
+  `setup-backups`, `sysadmin-init`. Реализация на `srv-main` — runbook
+  `2026-06-29-srv-main-backup-on-backup-host.md` (в приватной инфре оператора).

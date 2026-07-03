@@ -79,7 +79,7 @@
         "remote_host": {
           "type": "string",
           "minLength": 1,
-          "description": "Указатель на сервер-приёмник бэкапа для destination=remote-sftp: SSH-алиас или host:path (например, iiservertim:/backup/srv-spb-restic). Только указатель, БЕЗ секретов — ключи, forced-command, расписание и restore-процедура описываются в runbook/inventory. Опционально (для документирования; источник правды деталей — runbook)."
+          "description": "Указатель на сервер-приёмник бэкапа для destination=remote-sftp: SSH-алиас или host:path (например, backup-host:/backup/srv-main-restic). Только указатель, БЕЗ секретов — ключи, forced-command, расписание и restore-процедура описываются в runbook/inventory. Опционально (для документирования; источник правды деталей — runbook)."
         },
         "retention": {
           "type": "object",

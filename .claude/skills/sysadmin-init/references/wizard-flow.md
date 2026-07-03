@@ -286,7 +286,7 @@ hostname (regex `^[a-z0-9.-]+$`).
   remote'а в `~/.config/rclone/rclone.conf` (например `yandex-disk`).
   Валидация: regex `^[a-zA-Z][a-zA-Z0-9_-]+$`.
 - `backups.remote_host` (опц., если destination=`remote-sftp`): указатель на
-  приёмник — SSH-host:path (например `iiservertim:/backup/srv-spb-restic`). Без
+  приёмник — SSH-host:path (например `backup-host:/backup/srv-main-restic`). Без
   секретов; детали (ключ, forced-command, расписание) — в runbook. См. ADR-0018.
 - `backups.retention` (text, default `7d-4w-6m` — 7 дней, 4 недели,
   6 месяцев). Подсказка: «Стандарт индустрии. Можешь оставить или ввести

@@ -223,14 +223,14 @@ cat` показывает только отфильтрованные юниты
 macOS-local) — honest unknown «нет данных (systemctl недоступен)», снимок не падает
 (`set +e`).
 
-**Граблекейс selectel (2026-05-24, расширение фильтра):** на боевом сервере в
+**Граблекейс srv-main (2026-05-24, расширение фильтра):** на боевом сервере в
 «операторские» таймеры просочились штатные `chrony-dnssrv@`, `mdadm-last-resort@`,
 `mdcheck_start/continue`, `mdmonitor-oneshot`, `ua-timer`, `snapd.snap-repair` — их
 префиксы (`chrony-`, `mdadm-`, `mdcheck`, `mdmonitor`, `ua-timer`, `snapd.`) не были
-в исключениях, и реальный сигнал (`newsforge-collector*`) тонул в 7 строках шума.
+в исключениях, и реальный сигнал (`<app>-collector*`) тонул в 7 строках шума.
 Фильтр расширен: добавлены `snapd.|chrony-|chronyd|mdadm-|mdcheck|mdmonitor|ua-timer|
-ua_|ubuntu-advantage|raid-check|btrfs|smartd`. После фикса на selectel остаются ровно
-3 операторских таймера (news-pipeline). При появлении новых ложных срабатываний —
+ua_|ubuntu-advantage|raid-check|btrfs|smartd`. После фикса на srv-main остаются ровно
+3 операторских таймера (<app>-pipeline). При появлении новых ложных срабатываний —
 дописывать префикс сюда, не выдумывать.
 
 ---
@@ -247,7 +247,7 @@ ua_|ubuntu-advantage|raid-check|btrfs|smartd`. После фикса на select
 Пустой набор → «пусто (file-watcher'ов не найдено)», не ошибка (`set +e` — grep на
 пустом выводе возвращает ненулевой код).
 
-**Граблекейс selectel (2026-05-24, ложное срабатывание hardware watchdog):** голый
+**Граблекейс srv-main (2026-05-24, ложное срабатывание hardware watchdog):** голый
 паттерн `watchdog` ловил `watchdogd` и `/usr/sbin/watchdog` — это демон слежения за
 зависанием ядра (hardware watchdog), а НЕ наблюдатель за файлами. На карте он
 становился фантомной «автоматизацией-наблюдателем», которой оператор не заводил.
@@ -255,13 +255,13 @@ ua_|ubuntu-advantage|raid-check|btrfs|smartd`. После фикса на select
 (`inotifywait|inotifywatch|fswatch|watchmedo`), а второй `grep -vE` отсекает
 hardware-демон по `/usr/sbin/watchdog` и `\bwatchdogd\b`. Python-watchdog,
 запущенный как наблюдатель, ловится по `watchmedo` (его CLI). После фикса на
-selectel watchers.txt честно пуст.
+srv-main watchers.txt честно пуст.
 
 ---
 
 ## crontab.txt и прочие секции: секрет в query-string утекал открытым текстом
 
-**Симптом (граблекейс selectel, 2026-05-24):** в `crontab.txt` видна cron-задача
+**Симптом (граблекейс srv-main, 2026-05-24):** в `crontab.txt` видна cron-задача
 `curl "http://localhost:3100/api/cron/cleanup-orders?secret=B+SLNc55...="` — реальный
 токен записан **открытым текстом**, хотя `meta.txt` рапортует `redaction_applied: true`.
 
@@ -277,7 +277,7 @@ selectel watchers.txt честно пуст.
 `redact_stream` до записи на диск — общий рубеж, не точечный. (2) в `redact_stream`
 добавлен третий sed-паттерн на query-string секреты:
 `[?&](secret|token|key|password|passwd|access_token|api_key|apikey|sig|signature)=`
-→ `<REDACTED>`. После фикса grep по всему снимку selectel не находит незамаскированных
+→ `<REDACTED>`. После фикса grep по всему снимку srv-main не находит незамаскированных
 секретов; `?secret=<REDACTED>` в crontab.txt.
 
 **Важно (граница):** redaction в снимке — это про то, чтобы секрет не уехал в git.

@@ -48,8 +48,8 @@ INVENTORY_DIR="${3:-${INVENTORY_DIR:-inventory}}"
 # === Определение имени хоста для пути ===
 # Канон имени папки хоста — из infra-config.json servers[].alias; его передаёт
 # SKILL через env HOST_DIR (Шаг 2). Без override выводим из SSH-target как
-# fallback, НО это риск раздвоить inventory: алиас `selectel` дал бы `prod-selectel`,
-# а записанный хост — `prod-82.148.28.22` (находка /retro 2026-06-14). Поэтому при
+# fallback, НО это риск раздвоить inventory: алиас `hoster` дал бы `prod-hoster`,
+# а записанный хост — `prod-198.51.100.7` (находка /retro 2026-06-14). Поэтому при
 # расхождении канона и выведенного — громко предупреждаем и берём канон.
 if [ "$SERVER" = "local" ]; then
     DERIVED_HOST_DIR="local-$(hostname -s)"
@@ -189,7 +189,7 @@ fi
 # redaction применялся только к containers-inspect.json и host-env-redacted.txt,
 # а остальные секции (crontab, host-scripts-content, nginx-sites) писались
 # сырыми — и секрет в query-string cron-задачи утекал открытым текстом
-# (граблекейс selectel). Теперь redaction — общий рубеж для всех run_remote,
+# (граблекейс srv-main). Теперь redaction — общий рубеж для всех run_remote,
 # а meta.txt:redaction_applied=true перестаёт вводить в заблуждение.
 run_remote() {
     local label="$1"
@@ -297,7 +297,7 @@ run_remote "tls-certs.txt" \
 # 10. Список хостовых скриптов (метаданные, без содержимого)
 #     set +e + true: пустые glob'ы (/opt/*.yml, /root/bin/) дают ls ненулевой
 #     код, и под set -o pipefail вся секция ложно помечалась как failed
-#     (граблекейс selectel: данные собирались, но в конец файла дописывался
+#     (граблекейс srv-main: данные собирались, но в конец файла дописывался
 #     'ERROR: ...'). Honest-status: секция падает только при реальной ошибке.
 run_remote "host-scripts-list.txt" \
     "set +e
@@ -380,7 +380,7 @@ run_remote "systemd-timers.txt" \
 # 16. Скрипты-наблюдатели (watchers) — долгоживущие процессы, слушающие события
 #     файловой системы (inotify/fswatch/python-watchdog), в отличие от запуска
 #     по расписанию.
-#     ВАЖНО (граблекейс selectel): НЕ ловим hardware watchdog (watchdogd,
+#     ВАЖНО (граблекейс srv-main): НЕ ловим hardware watchdog (watchdogd,
 #     /usr/sbin/watchdog) — это демон слежения за зависанием ядра, а не
 #     наблюдатель за файлами; иначе на карте появляется фантомная «автоматизация».
 #     Паттерн сужен до настоящих file-watcher'ов; голый 'watchdog' исключён,

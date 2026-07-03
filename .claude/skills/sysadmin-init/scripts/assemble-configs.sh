@@ -12,7 +12,7 @@
 #   [MON_ENABLED=true MON_STACK_JSON='["uptime-kuma","beszel"]' MON_PANEL_DOMAIN=...] \
 #   [BACKUPS_ENABLED=true BACKUPS_DESTINATION=yandex-disk-webdav \
 #     BACKUPS_RETENTION_JSON='{"daily":7,"weekly":4,"monthly":6}' BACKUPS_RCLONE_REMOTE=yandex-disk \
-#     BACKUPS_REMOTE_HOST=iiservertim:/backup/srv-spb-restic] \
+#     BACKUPS_REMOTE_HOST=backup-host:/backup/srv-main-restic] \
 #   [TG_ENABLED=true TG_BOT_USERNAME=mybot TG_CHAT_TYPE=personal] \
 #   [VPN_ENABLED=true [VPN_REALITY_DEST=www.cloudflare.com]] \
 #   assemble-configs.sh <workdir> [<sysadmin_root>]

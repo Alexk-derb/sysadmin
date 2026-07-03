@@ -476,11 +476,11 @@ jq -r '.servers[0].role' "$INFRA_CONFIG_PATH" # пример инфра-поля
 # Пример: включить бэкап на свой сервер, не трогая остальную карту (в т.ч. блок vpn).
 bash "$SYSADMIN_ROOT/.claude/skills/sysadmin-init/scripts/reconfigure-write.sh" \
   infra "$INFRA_CONFIG_PATH" \
-  '.backups = {enabled:true, destination:"remote-sftp", remote_host:"iiservertim:/backup/srv-spb-restic", retention:{daily:7,weekly:4,monthly:6}}'
+  '.backups = {enabled:true, destination:"remote-sftp", remote_host:"backup-host:/backup/srv-main-restic", retention:{daily:7,weekly:4,monthly:6}}'
 
 # Пример (мозг): переименовать ОДИН проект, сохранив весь массив projects[].
 bash "$SYSADMIN_ROOT/.claude/skills/sysadmin-init/scripts/reconfigure-write.sh" \
-  agent "$BRAIN_PATH" '(.projects[] | select(.id=="srv-spb-selectel")).title = "Новое имя"'
+  agent "$BRAIN_PATH" '(.projects[] | select(.id=="srv-main")).title = "Новое имя"'
 ```
 
 Несколько изменённых блоков — патчи можно накатывать последовательно (каждый со своей валидацией

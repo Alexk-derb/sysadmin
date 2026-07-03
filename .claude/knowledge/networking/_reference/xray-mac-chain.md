@@ -29,7 +29,7 @@ privoxy (SOCKS→HTTP bridge)
     ↓ forward-socks5 → 127.0.0.1:10808
 xray (SOCKS inbound :10808)
     ↓ dialerProxy: "nur-bypass"
-NurVPN gRPC+Reality (обход WL, маскировка под ads.x5.ru)
+NurVPN gRPC+Reality (обход WL, маскировка под <SNI-провайдера>)
     ↓
 Blanc USA VLESS+TLS (exit IP)
     ↓
@@ -61,8 +61,8 @@ xray поддерживает произвольные chain через `sockopt
 - `http-in` на :10809 (запасной)
 
 Два outbound в chain:
-- `blanc-usa` — VLESS+TLS:8443, SNI cdn2-07.vk-cdnvideo.com, `dialerProxy: "nur-bypass"`
-- `nur-bypass` — VLESS+Reality+gRPC:443, serverName ads.x5.ru
+- `blanc-usa` — VLESS+TLS:8443, SNI `<masquerade-SNI>`, `dialerProxy: "nur-bypass"`
+- `nur-bypass` — VLESS+Reality+gRPC:443, serverName `<SNI-провайдера>`
 
 Routing: RU-домены и RU-IP → direct, остальное → blanc-usa (default first outbound).
 
@@ -174,16 +174,18 @@ xray поверх для Claude Code через chain bypass.
 
 ---
 
-## Серверы в конфиге (май 2026)
+## Серверы в конфиге (структура)
+
+> Конкретные адреса, SNI и UUID — из подписки провайдера, живут только в приватной
+> инфре оператора (`infra/`), в этот публичный документ не выносятся (C.4). Ниже —
+> обобщённая структура записи, плейсхолдеры вместо боевых значений.
 
 Transit (NurVPN bypass, серия 5.x gRPC):
-- api.st.nurcloud.org:443, Reality, SNI: ads.x5.ru, serviceName: adsx5
+- `<transit-host>`:443, Reality, SNI: `<SNI-провайдера>`, serviceName: `<grpc-service>`
 
-Exit (Blanc USA):
-- 213.171.31.2:8443 (NYC), SNI: cdn2-07.vk-cdnvideo.com
-- 82.202.140.29:8443 (LA), SNI: cdn5-19.vk-cdnvideo.com
-- 84.32.184.93:8443 (Houston), SNI: cdn1-42.vk-cdnvideo.com
-- 62.233.43.150:8443 (San Jose), SNI: cdn4-65.vk-cdnvideo.com
-- 82.202.159.156:8443 (Miami), SNI: cdn8-90.vk-cdnvideo.com
+Exit (Blanc USA), по одному узлу на город:
+- `<exit-ip>`:8443 (NYC), SNI: `<masquerade-SNI>`
+- `<exit-ip>`:8443 (LA), SNI: `<masquerade-SNI>`
+- … (San Jose / Miami / Houston — та же структура)
 
-UUID Blanc: 8c8f0fd6-4636-465d-af60-8dc3b6bc68df (общий для всех)
+UUID клиента: `<UUID>` (общий для всех узлов подписки; хранится в менеджере паролей)
