@@ -31,6 +31,14 @@ import re
 import sys
 import glob
 
+# Windows-консоль по умолчанию cp1251 — эмодзи в выводе (📊/✅/❌) роняют скрипт
+# UnicodeEncodeError. Принудительно переводим stdout/stderr на UTF-8 (Python ≥3.7).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 try:
     import yaml
     HAS_YAML = True
@@ -132,6 +140,31 @@ def resolve_ref(ref, file_path, domain_dir, repo_root):
     return os.path.normpath(os.path.join(os.path.dirname(file_path), ref))
 
 
+def path_satisfied(cand):
+    """Существует ли цель ссылки — с учётом генерируемого слоя `_live/`.
+
+    Файлы `_live/*.md` создаёт per-user `/refresh-vpn-knowledge` и они gitignore'ятся
+    (ADR-0006); в репо лежат только шаблоны `*.example.md`. Значит, на свежем клоне
+    ссылка на ещё-не-сгенерированный `_live/<name>.md` — НЕ битая, если для него есть
+    шаблон: `<name>.example.md` (точный) или `<base>.example.md`, где base — часть
+    имени до первого `-` (общий шаблон `frontline.example.md` для `frontline-ru.md`).
+    """
+    if os.path.exists(cand):
+        return True
+    d = os.path.dirname(cand)
+    if os.path.basename(d) == "_live":
+        base = os.path.basename(cand)
+        if base.endswith(".md"):
+            stem = base[:-3]                       # frontline-ru
+            stems = [stem]
+            if "-" in stem:
+                stems.append(stem.split("-", 1)[0])  # frontline
+            for s in stems:
+                if os.path.exists(os.path.join(d, s + ".example.md")):
+                    return True
+    return False
+
+
 def main():
     if not os.path.isdir(KNOWLEDGE_DIR):
         print(f"ОШИБКА: папка {KNOWLEDGE_DIR}/ не найдена. Запускай из корня репо.")
@@ -161,7 +194,7 @@ def main():
         for rx in (MD_LINK_RE, TICK_REF_RE):
             for m in rx.finditer(texts[f]):
                 cand = resolve_ref(m.group(1), f, domain_dir, repo_root)
-                if cand and not os.path.exists(cand):
+                if cand and not path_satisfied(cand):
                     broken.append((f, m.group(1)))
 
     # --- 3. сироты (мягко) ---
