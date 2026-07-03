@@ -68,14 +68,23 @@ case "$STAGED" in *".claude/knowledge/"*) KNOWLEDGE_TOUCHED=1 ;; esac
 
 if [ "$KNOWLEDGE_TOUCHED" -eq 1 ]; then
     VALIDATOR="$ROOT/scripts/validate-knowledge.py"
+    # Ищем РАБОЧИЙ интерпретатор, а не просто наличие: на Windows `python3` часто —
+    # нерабочий WindowsApps-стаб (Store-редирект, exit 49), а реальный Python зовётся
+    # `python`. Поэтому проверяем исполнимость (`-c 'import sys'`), не `command -v`.
+    PYBIN=""
+    for _py in python3 python; do
+        if command -v "$_py" >/dev/null 2>&1 && "$_py" -c 'import sys' >/dev/null 2>&1; then
+            PYBIN="$_py"; break
+        fi
+    done
     if [ ! -f "$VALIDATOR" ]; then
         echo "⚠️  pre-commit: knowledge меняется, но валидатор не найден ($VALIDATOR) — пропускаю." >&2
-    elif ! command -v python3 >/dev/null 2>&1; then
-        echo "⚠️  pre-commit: python3 не найден — пропускаю валидацию knowledge." >&2
+    elif [ -z "$PYBIN" ]; then
+        echo "⚠️  pre-commit: рабочий python не найден — пропускаю валидацию knowledge." >&2
         echo "   Для строгой проверки целостности базы знаний установи python3 (+ pip install pyyaml)." >&2
     else
-        echo "pre-commit: коммит трогает knowledge → проверяю целостность базы…" >&2
-        if ! ( cd "$ROOT" && python3 "$VALIDATOR" >&2 ); then
+        echo "pre-commit: коммит трогает knowledge → проверяю целостность базы ($PYBIN)…" >&2
+        if ! ( cd "$ROOT" && "$PYBIN" "$VALIDATOR" >&2 ); then
             echo >&2
             echo "❌ pre-commit: база знаний не прошла валидацию (frontmatter / битые ссылки)." >&2
             echo "   Почини по выводу выше. Обход (редко): git commit --no-verify" >&2
