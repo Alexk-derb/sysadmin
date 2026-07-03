@@ -1,0 +1,9 @@
+# Нормализация переносов строк.
+#
+# Shell/Python-скрипты ОБЯЗАНЫ быть LF на всех платформах: при клоне на Windows
+# (core.autocrlf=true) без этой директивы .sh получает CRLF в рабочей копии, и
+# скопированный оттуда на сервер скрипт падает с `\r: command not found`.
+# Аудит 2026-07-03: у всех 75 .sh было `w/crlf` на Windows-клоне.
+*.sh   text eol=lf
+*.bash text eol=lf
+*.py   text eol=lf
