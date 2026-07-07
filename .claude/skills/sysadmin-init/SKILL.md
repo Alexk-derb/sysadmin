@@ -258,7 +258,7 @@ Bitwarden») — полностью в `wizard-flow.md` §«Другой мен�
 (uptime-kuma+beszel) / полный (+dozzle+dockge+diun, ★ для production).
 
 **Раунд 5 (бэкапы).** `enabled` → `destination` (enum: `yandex-disk-webdav` для РФ /
-`s3`/`b2` / `nextcloud-webdav` / `remote-sftp` (свой сервер по SSH, ADR-0018) / `local`(не советую)),
+`s3`/`b2` / `nextcloud-webdav` / `remote-sftp` (свой сервер по SSH, ADR-0019) / `local`(не советую)),
 `rclone_remote` (для webdav-вариантов, regex `^[a-zA-Z][a-zA-Z0-9_-]+$`), `remote_host` (опц., для
 `remote-sftp` — указатель host:path, без секретов), `retention`. **⚠️ `retention` — ОБЪЕКТ `{daily,weekly,
 monthly}` (целые), НЕ строка** (схема `additionalProperties:false`). Дефолт `{daily:7,
@@ -464,7 +464,7 @@ jq -r '.secrets.manager' "$BRAIN_PATH"        # пример агент-поля
 jq -r '.servers[0].role' "$INFRA_CONFIG_PATH" # пример инфра-поля (Раунд 3)
 ```
 
-**Запись reconfigure = merge-patch поверх ТЕКУЩЕГО конфига, НЕ пересборка из skeleton (ADR-0019).**
+**Запись reconfigure = merge-patch поверх ТЕКУЩЕГО конфига, НЕ пересборка из skeleton (ADR-0020).**
 `assemble-configs.sh` рассчитан на первичный setup (v1.0: один проект/сервер) — на reconfigure он
 **затирает** доп. проекты в мозге (`projects[1+]`), доп. серверы (`servers[1+]`) и опц. блоки карты,
 не переданные флагами (`vpn`, `map`, `meta`). Поэтому изменённые ключи накатываю на текущий файл
