@@ -243,7 +243,7 @@ infra/                             ← ТВОЯ ПРИВАТНАЯ папка (�
 │
 ├── decisions/                     ← твои ADR (по шаблону 0000-template.md)
 ├── incidents/                     ← постмортемы инцидентов
-├── knowledge/                     ← lessons-learned, operator-profile, working-patterns
+├── knowledge/                     ← граф заметок: lessons/, patterns/, operator-profile (ADR-0018)
 └── runbooks/                      ← пошаговые процедуры под твою инфру
 ```
 
