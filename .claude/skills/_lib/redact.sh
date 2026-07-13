@@ -23,7 +23,7 @@ redact_stream() {
     #    матчится в любом месте имени до '=').
     # 2. credentials в URL: scheme://user:pass@host -> scheme://user:<REDACTED>@host
     # 3. секрет в query-string URL: ?secret=...&token=... -> ?secret=<REDACTED>
-    #    (граблекейс srv-main: cron-задача с curl "...?secret=B+SLNc55..." утекала
+    #    (граблекейс srv-main: cron-задача с curl "...?secret=<секрет>..." утекала
     #    открытым текстом в crontab.txt — KEY=value и url:pass@ её не ловили).
     # 4. AWS access key ID по ЗНАЧЕНИЮ: AKIA/ASIA + 16 символов [A-Z0-9]. Имя
     #    переменной AWS_ACCESS_KEY_ID ловится правилом 1, но голый AKIA... в логе

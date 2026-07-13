@@ -262,7 +262,7 @@ srv-main watchers.txt честно пуст.
 ## crontab.txt и прочие секции: секрет в query-string утекал открытым текстом
 
 **Симптом (граблекейс srv-main, 2026-05-24):** в `crontab.txt` видна cron-задача
-`curl "http://localhost:3100/api/cron/cleanup-orders?secret=B+SLNc55...="` — реальный
+`curl "http://localhost:3100/api/cron/cleanup-orders?secret=<секрет>..."` — реальный
 токен записан **открытым текстом**, хотя `meta.txt` рапортует `redaction_applied: true`.
 
 **Причина — две независимые дыры:**
