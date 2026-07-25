@@ -33,6 +33,11 @@ redact_stream() {
     #    ALTER USER ... WITH PASSWORD '...' / IDENTIFIED BY '...' — правила 1-4
     #    их не ловят (нет '=' после слова PASSWORD).
     # 6. redis requirepass в выводе/эхо команд CONFIG SET requirepass <pw>.
+    # 7. JWT в любой форме (Authorization: Bearer eyJ… / голый токен в healthcheck
+    #    или конфиге контейнера): header.payload.signature, где header и payload —
+    #    base64url, начинающиеся с 'eyJ' ({"). Правила 1-6 не ловят (нет '=' после
+    #    секрет-слова, не URL-cred). Грабля dump-snapshot-jwt-redaction-gap: anon/
+    #    service_role-ключи Supabase в Bearer-форме утекали в снимок, ловил gitleaks.
     sed -E \
         -e 's/("?[A-Za-z0-9_]*(TOKEN|KEY|SECRET|PASSWORD|PASS|API|CREDENTIAL)[A-Za-z0-9_]*"?[[:space:]]*[=:][[:space:]]*"?)[^"[:space:],}]+/\1<REDACTED>/Ig' \
         -e 's#(([A-Za-z][A-Za-z0-9+.-]*)://[^:@/[:space:]]+:)[^@/[:space:]]+@#\1<REDACTED>@#g' \
@@ -40,7 +45,8 @@ redact_stream() {
         -e 's/(AKIA|ASIA)[A-Z0-9]{16}/<REDACTED>/g' \
         -e "s/(PASSWORD[[:space:]]+')[^']*(')/\1<REDACTED>\2/Ig" \
         -e "s/(IDENTIFIED[[:space:]]+BY[[:space:]]+')[^']*(')/\1<REDACTED>\2/Ig" \
-        -e 's/(requirepass[[:space:]]+)[^[:space:]"]+/\1<REDACTED>/Ig'
+        -e 's/(requirepass[[:space:]]+)[^[:space:]"]+/\1<REDACTED>/Ig' \
+        -e 's/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/<REDACTED-JWT>/g'
 }
 
 # Маскировка JSON через jq, если он доступен: значения .Config.Env и .Env,
@@ -65,5 +71,7 @@ redact_json_with_jq() {
         end;
       (.. | objects | select(has("Env")) | .Env) |= redact_env
     ' 2>/dev/null \
-    | sed -E "s#(([A-Za-z][A-Za-z0-9+.-]*)://[^:@/[:space:]]+:)[^@/[:space:]\"]+@#\1<REDACTED>@#g"
+    | sed -E \
+        -e "s#(([A-Za-z][A-Za-z0-9+.-]*)://[^:@/[:space:]]+:)[^@/[:space:]\"]+@#\1<REDACTED>@#g" \
+        -e "s#eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*#<REDACTED-JWT>#g"
 }

@@ -410,8 +410,8 @@ run_remote "health-flags.txt" \
      uptime | grep -oE 'load average.*' | sed 's/load average://; s/^/loadavg=/'
      echo \"exited_containers=\$(docker ps -aq --filter status=exited 2>/dev/null | wc -l | tr -d ' ')\"
      echo \"oom137_containers=\$(docker ps -a --filter exited=137 --format '{{.Names}}' 2>/dev/null | tr '\\n' ' ')\"
-     echo \"apt_upgradable=\$(apt list --upgradable 2>/dev/null | grep -c upgradable)\"
-     echo \"apt_security=\$(apt list --upgradable 2>/dev/null | grep -ci security)\"
+     echo \"apt_upgradable=\$(LC_ALL=C apt list --upgradable 2>/dev/null | grep -c upgradable)\"
+     echo \"apt_security=\$(LC_ALL=C apt list --upgradable 2>/dev/null | grep -ci security)\"
      true"
 
 # === Итог ===
