@@ -34,7 +34,12 @@ if [ "$PERSONA_TOUCHED" -eq 1 ]; then
     case "$STAGED" in
         *"CLAUDE.md"*)
             if [ -f "$CLAUDEMD" ]; then
-                BYTES="$(wc -c < "$CLAUDEMD" | tr -d ' ')"
+                # Канонический размер — тот, что уходит в репозиторий: staged-блоб уже
+                # прошёл clean-фильтр, значит LF. Сырой `wc -c` рабочей копии на Windows
+                # завышает на число строк (CRLF) и делает порог платформозависимым —
+                # правка, проходящая на сервере, падала бы на ноутбуке (ADR-0023).
+                BYTES="$(git cat-file -s :CLAUDE.md 2>/dev/null)"
+                [ -n "$BYTES" ] || BYTES="$(tr -d '\r' < "$CLAUDEMD" | wc -c | tr -d ' ')"
                 if [ "$BYTES" -gt "$CLAUDE_BUDGET_BYTES" ]; then
                     echo "❌ pre-commit: CLAUDE.md = ${BYTES} Б > бюджет ${CLAUDE_BUDGET_BYTES} Б (ADR-0016)." >&2
                     echo "   Ядро грузится при каждом старте. Вынеси часть в references/ («одно входит — одно выходит»)," >&2
