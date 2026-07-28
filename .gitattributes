@@ -7,3 +7,8 @@
 *.sh   text eol=lf
 *.bash text eol=lf
 *.py   text eol=lf
+
+# Git-хуки — исполняемые скрипты без расширения, под маску *.sh не попадают.
+# На Linux CRLF в hook'е даёт `\r: command not found` и молча отключает защиту
+# (линтер персоны, бюджет ядра, валидатор knowledge). Аудит 2026-07-27.
+.githooks/* text eol=lf
