@@ -38,6 +38,13 @@ redact_stream() {
     #    base64url, начинающиеся с 'eyJ' ({"). Правила 1-6 не ловят (нет '=' после
     #    секрет-слова, не URL-cred). Грабля dump-snapshot-jwt-redaction-gap: anon/
     #    service_role-ключи Supabase в Bearer-форме утекали в снимок, ловил gitleaks.
+    # 8. Ключи вида sb_secret_… / sb_publishable_… (Supabase, новый формат) — ловятся
+    #    ПО ЗНАЧЕНИЮ. Правило 1 их не берёт: имя переменной бывает безобидным, а сам
+    #    ключ лежит внутри многострочного YAML-конфига. Грабля 2026-08-08: такой ключ
+    #    ушёл в снимок открытым текстом, поймал gitleaks уже перед коммитом.
+    # 9. Приватный ключ PEM в ОДНОЙ строке — так он выглядит внутри JSON, где переводы
+    #    строк экранированы (`docker inspect`: ключ лежал в Args/Entrypoint).
+    #    Многострочный вариант добирает _redact_pem_multiline ниже.
     sed -E \
         -e 's/("?[A-Za-z0-9_]*(TOKEN|KEY|SECRET|PASSWORD|PASS|API|CREDENTIAL)[A-Za-z0-9_]*"?[[:space:]]*[=:][[:space:]]*"?)[^"[:space:],}]+/\1<REDACTED>/Ig' \
         -e 's#(([A-Za-z][A-Za-z0-9+.-]*)://[^:@/[:space:]]+:)[^@/[:space:]]+@#\1<REDACTED>@#g' \
@@ -46,7 +53,25 @@ redact_stream() {
         -e "s/(PASSWORD[[:space:]]+')[^']*(')/\1<REDACTED>\2/Ig" \
         -e "s/(IDENTIFIED[[:space:]]+BY[[:space:]]+')[^']*(')/\1<REDACTED>\2/Ig" \
         -e 's/(requirepass[[:space:]]+)[^[:space:]"]+/\1<REDACTED>/Ig' \
-        -e 's/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/<REDACTED-JWT>/g'
+        -e 's/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/<REDACTED-JWT>/g' \
+        -e 's/sb_(secret|publishable)_[A-Za-z0-9_-]{8,}/<REDACTED>/g' \
+        -e 's/-----BEGIN [A-Z ]*PRIVATE KEY-----.*-----END [A-Z ]*PRIVATE KEY-----/<REDACTED-PRIVATE-KEY>/g' \
+    | _redact_pem_multiline
+}
+
+# Многострочный PEM: построчный sed его не видит в принципе — блок начинается в одной
+# строке, а заканчивается в другой. Поэтому отдельный проход, склеенный в конвейер
+# redact_stream (все потребители получают защиту автоматически, менять их не нужно).
+# Незакрытый блок (файл оборвался после BEGIN) тоже съедается — это осознанно:
+# лучше потерять хвост вывода, чем отдать половину ключа.
+_redact_pem_multiline() {
+    awk '
+      /-----BEGIN [A-Z ]*PRIVATE KEY-----/ && !/-----END [A-Z ]*PRIVATE KEY-----/ {
+          print "<REDACTED-PRIVATE-KEY>"; inkey=1; next }
+      inkey && /-----END [A-Z ]*PRIVATE KEY-----/ { inkey=0; next }
+      inkey { next }
+      { print }
+    '
 }
 
 # Маскировка JSON через jq, если он доступен: значения .Config.Env и .Env,
@@ -58,6 +83,38 @@ redact_stream() {
 # — имя переменной не матчит секрет-паттерн, и строка остаётся нетронутой
 # (проверено тестом: пароль утекал). Поэтому ПОСЛЕ структурной маскировки
 # прогоняем вывод jq через тот же URL-паттерн, что и построчный fallback.
+# Глубокая маскировка JSON: обходит ВСЕ строки документа, а не только .Env.
+#
+# Зачем отдельно от redact_json_with_jq: та смотрит только на массив .Env и потому
+# структурно слепа к секретам в .Args, .Config.Entrypoint, .Config.Cmd, .Config.Labels,
+# .Config.Healthcheck.Test, .HostConfig.LogConfig.Config. Грабля 2026-08-08: приватный
+# TLS-ключ лежал в Args/Entrypoint и прошёл маску насквозь.
+#
+# FAIL-CLOSED: без jq возвращает 3 и НИЧЕГО не печатает. Подменять структурную обработку
+# построчным sed нельзя — он не умеет надёжно проецировать JSON и может отдать половину
+# документа. Вызывающий обязан считать это отказом, а не поводом писать сырьё.
+#
+# Это страховка, а не основной механизм: снимок не должен нести сырой `docker inspect`
+# вообще (см. containers-summary.json в inventory-scan).
+redact_json_deep() {
+    command -v jq >/dev/null 2>&1 || return 3
+    jq '
+      def scrub:
+        gsub("sb_(secret|publishable)_[A-Za-z0-9_-]{8,}"; "<REDACTED>")
+        | gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"; "<REDACTED-PRIVATE-KEY>")
+        | gsub("eyJ[A-Za-z0-9_-]+\\.eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]*"; "<REDACTED-JWT>")
+        | gsub("(?<k>[A-Za-z0-9_]*(TOKEN|KEY|SECRET|PASSWORD|PASS|API|CREDENTIAL)[A-Za-z0-9_]*=)[^\\s\"]+"; "\(.k)<REDACTED>"; "i")
+        | gsub("(?<p>[A-Za-z][A-Za-z0-9+.-]*://[^:@/\\s]+:)[^@/\\s\"]+@"; "\(.p)<REDACTED>@")
+        | gsub("(?<q>[?&](secret|token|key|password|passwd|access_token|api_key|apikey)=)[^&\\s\"]+"; "\(.q)<REDACTED>"; "i")
+        | gsub("(AKIA|ASIA)[A-Z0-9]{16}"; "<REDACTED>");
+      def walkdeep: if type == "object" then map_values(walkdeep)
+                    elif type == "array" then map(walkdeep)
+                    elif type == "string" then scrub
+                    else . end;
+      walkdeep
+    ' 2>/dev/null || return 4
+}
+
 redact_json_with_jq() {
     jq '
       def redact_env:
