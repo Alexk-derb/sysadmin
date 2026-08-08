@@ -117,8 +117,9 @@ bash scripts/dump-snapshot.sh "$SSH_HOST" "$SNAPSHOT_DATE" "$INVENTORY_DIR"
 - nginx-конфиг через `nginx -T` (`nginx-sites.txt`)
 - TLS-сертификаты (letsencrypt + acme.sh) — **даты валидности** через `openssl x509`
   (`tls-certs.txt`); openssl бежит по обоим источникам (фикс /retro)
-- Список и содержимое host-скриптов в `/opt/*.sh` (`host-scripts-list.txt`,
-  `host-scripts-content.txt`)
+- Host-скрипты: список строится по `ExecStart` включённых service/timer/path-юнитов
+  (с разворачиванием обёрток `/bin/bash -lc '…'`), типовые каталоги — дополнением
+  (`host-scripts-list.txt`, `host-scripts-content.txt`)
 - Структура .env-файлов на хосте (имена переменных, значения redacted)
   (`host-env-redacted.txt`)
 - Включённые systemd-юниты (`systemd-enabled.txt`)
@@ -340,7 +341,7 @@ rm -rf "$LOCK"   # $INVENTORY_DIR/.scan.lock — снять в конце ИЛИ
   окружения не сохраняются никогда — только имена. Без `jq` проекция не выполняется
   (fail-closed), вместо неё кладётся `containers-summary.SKIPPED.txt`. Проверяется
   `tests/test-inventory-scan.sh` (приманка — opaque-маркер; «gitleaks чист» доказательством
-  не считается).
+  не считается). Решение целиком — ADR-0025 `decisions/0025-snapshot-projection-not-redaction.md`.
 - **«host-скрипты искались не там»** — ИСПРАВЛЕНО (v3). Симптом: список строился по
   `/opt/*.sh`, `/usr/local/{bin,sbin}/*.sh`, `/root/bin/`, а реальные 16 скриптов лежали в
   `/opt/backup/` и `/opt/*/ops/` — inventory числил один. Лечение: обход `ExecStart`

@@ -185,7 +185,7 @@ sysadmin/                          ← публичный репо (этот). �
 │       ├── cleanup-existing-server/
 │       └── migrate-server-to-server/
 │
-├── decisions/                     ← ADR-канон + 16 архитектурных решений
+├── decisions/                     ← ADR-канон + 25 архитектурных решений
 │   ├── 0000-template.md
 │   ├── 0001-skill-canon.md
 │   ├── 0002-persona-canon.md
