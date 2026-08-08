@@ -24,11 +24,16 @@
 #   bash dump-snapshot.sh root@10.0.0.1 2026-01-01       # произвольный сервер и дата
 #   bash dump-snapshot.sh prod today /tmp/inv            # альтернативный INVENTORY_DIR
 #
-# Создаёт ~16 файлов в ${INVENTORY_DIR}/hosts/<HOST_DIR>/snapshots/<DATE>/
-# (containers, networks, volumes, host-resources, crontab, nginx-sites, tls-certs,
-#  host-scripts-list, host-scripts-content, host-env-redacted, cron-d-content,
-#  systemd-enabled, systemd-timers, watchers, compose-files,
-#  containers-inspect.json, meta.txt).
+# Создаёт ~20 файлов в ${INVENTORY_DIR}/hosts/<HOST_DIR>/snapshots/<DATE>/
+# (containers, networks, volumes — плюс варианты по каждому демону `.<tag>.txt`;
+#  host-resources, crontab, nginx-sites, tls-certs, host-scripts-list,
+#  host-scripts-content, host-env-redacted, cron-d-content, systemd-enabled,
+#  systemd-timers, watchers, compose-files, docker-endpoints.txt,
+#  containers-summary.json, meta.txt).
+#
+# v3 (2026-08-08): снимаются ВСЕ Docker-демоны хоста, а не только активный контекст;
+# сырой `docker inspect` в снимок больше не переносится — вместо него проекция белого
+# списка полей (scripts/summary-filter.jq). Причины — в SKILL.md, раздел Failed Attempts.
 
 set -euo pipefail
 
@@ -52,7 +57,10 @@ INVENTORY_DIR="${3:-${INVENTORY_DIR:-inventory}}"
 # а записанный хост — `prod-198.51.100.7` (находка /retro 2026-06-14). Поэтому при
 # расхождении канона и выведенного — громко предупреждаем и берём канон.
 if [ "$SERVER" = "local" ]; then
-    DERIVED_HOST_DIR="local-$(hostname -s)"
+    # hostname -s есть не везде (Git Bash на Windows, часть BSD) — под `set -e` это
+    # роняло весь скрипт ещё до первого шага. Деградируем по цепочке до 'unknown'.
+    _hn="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo unknown)"
+    DERIVED_HOST_DIR="local-${_hn}"
 else
     # user@1.2.3.4 -> prod-1.2.3.4 | user@hostname -> prod-hostname | ssh-alias -> prod-ssh-alias
     DERIVED_HOST_DIR="prod-${SERVER#*@}"
@@ -219,6 +227,85 @@ run_remote() {
     rm -f "$err_raw"
 }
 
+# === Обнаружение Docker-демонов (v3) ===
+#
+# Грабля 2026-08-08: скрипт звал `docker` в активном контексте пользователя, а им был
+# `rootless` — и боевой стек в снимок не попадал ВООБЩЕ. Снимки за разные даты при этом
+# оказывались сняты с разных демонов и стали несопоставимы.
+#
+# Контекст Docker — клиентская запись, а НЕ перечень демонов. Поэтому перечисляем
+# фактически отвечающие сокеты плюс endpoint'ы контекстов, а различаем по daemon ID.
+# ID берётся из `docker info` и хранится в data-root (`engine-id`): при клонировании
+# data-root два разных демона дадут одинаковый ID. Поэтому совпадение ID — повод
+# пометить КОЛЛИЗИЮ, а не молча выбросить endpoint.
+echo "  -> обнаружение Docker-демонов..."
+ENDPOINTS_RAW="$( { run_cmd "
+    set +e
+    { echo unix:///var/run/docker.sock
+      ls /run/user/*/docker.sock 2>/dev/null | sed 's|^|unix://|'
+      docker context ls --format '{{.DockerEndpoint}}' 2>/dev/null
+    } | grep -v '^\$' | sort -u
+    true" 2>/dev/null; } || true )"
+
+# tag|endpoint|daemon_id|status
+DAEMONS=""
+SEEN_IDS=""
+for ep in $ENDPOINTS_RAW; do
+    case "$ep" in
+        *"/run/user/"*) tag="rootless" ;;
+        *"/var/run/docker.sock") tag="default" ;;
+        *) tag="$(printf '%s' "$ep" | tr -c 'A-Za-z0-9' '-' | sed 's/^-*//; s/-*$//' | cut -c1-24)" ;;
+    esac
+    # `|| true` обязателен: под `set -e` присваивание из недоступного демона
+    # роняло весь снимок ещё на этапе обнаружения (поймано локальным прогоном).
+    did="$( { run_cmd "DOCKER_HOST='$ep' docker info --format '{{.ID}}' 2>/dev/null" 2>/dev/null || true; } | tr -d '\r' | head -1)"
+    if [ -z "$did" ]; then
+        DAEMONS="${DAEMONS}${tag}|${ep}||unreachable
+"
+        continue
+    fi
+    status="ok"
+    case " $SEEN_IDS " in *" $did "*) status="duplicate-id" ;; esac
+    SEEN_IDS="$SEEN_IDS $did"
+    DAEMONS="${DAEMONS}${tag}|${ep}|${did}|${status}
+"
+done
+
+{
+  echo "# endpoint'ы Docker, найденные на хосте (v3)"
+  echo "# tag|endpoint|daemon_id|status"
+  echo "# status: ok — снимаем; duplicate-id — тот же daemon ID, что у предыдущего"
+  echo "#         (возможна коллизия engine-id при клонировании data-root);"
+  echo "#         unreachable — сокет есть, но демон не ответил (нет прав или не запущен)."
+  printf '%s' "$DAEMONS"
+} | redact_stream > "${SNAPSHOT_DIR}/docker-endpoints.txt"
+
+DAEMON_OK_COUNT=$(printf '%s' "$DAEMONS" | grep -c '|ok$' || true)
+[ -z "$DAEMON_OK_COUNT" ] && DAEMON_OK_COUNT=0
+if [ "$DAEMON_OK_COUNT" -eq 0 ]; then
+    echo "     ПРЕДУПРЕЖДЕНИЕ: ни один Docker-демон не ответил — секции контейнеров будут пустыми."
+fi
+echo "     найдено endpoint'ов: $(printf '%s' "$DAEMONS" | grep -c '|' || true), снимаем с: ${DAEMON_OK_COUNT}"
+
+# docker_each <файл-суффикс> <команда с $DH вместо docker>
+# Прогоняет команду по каждому доступному демону, складывая результат в
+# <label>.<tag>.<ext> и дополнительно в общий <label> с шапкой демона.
+docker_each() {
+    local label="$1" ext="$2" cmd="$3"
+    local combined="${SNAPSHOT_DIR}/${label}.${ext}"
+    : > "$combined"
+    printf '%s' "$DAEMONS" | while IFS='|' read -r tag ep did status; do
+        [ "$status" = "ok" ] || continue
+        local out="${SNAPSHOT_DIR}/${label}.${tag}.${ext}"
+        run_cmd "DOCKER_HOST='$ep' $cmd" 2>/dev/null | redact_stream > "$out"
+        {
+          echo "=== демон ${tag} (${ep}, id=${did}) ==="
+          cat "$out"
+          echo
+        } >> "$combined"
+    done
+}
+
 # === Заголовочный файл meta.txt ===
 echo "  -> meta.txt..."
 cat > "${SNAPSHOT_DIR}/meta.txt" <<METATXT
@@ -236,37 +323,71 @@ METATXT
 
 # === 17 контентных файлов снимка (16 + health-flags.txt) ===
 
-# 1. Список контейнеров
-run_remote "containers.txt" \
+# 1. Список контейнеров — по КАЖДОМУ демону (v3)
+echo "  -> containers.txt (по каждому демону)..."
+docker_each "containers" "txt" \
     "docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'"
 
-# 2. Полный inspect всех контейнеров (env, mounts, networks) — С REDACTION.
-#    Сырой docker inspect содержит env-переменные контейнеров открытым текстом
-#    (API-ключи, токены ботов, пароли БД). Маскируем секреты ДО записи на диск.
-#    jq-путь (structurally-aware) с fallback на построчный sed.
-echo "  -> containers-inspect.json (redacted: ${REDACTION_TOOL})..."
-INSPECT_RAW=$(run_cmd "docker ps -a -q | xargs docker inspect 2>/dev/null || echo '[]'" 2>/dev/null || echo '[]')
-if [ "$REDACTION_TOOL" = "jq" ]; then
-    # Пробуем jq; если он не распарсил (битый JSON) — падаем в построчный fallback.
-    if ! printf '%s' "$INSPECT_RAW" | redact_json_with_jq > "${SNAPSHOT_DIR}/containers-inspect.json" 2>/dev/null \
-       || [ ! -s "${SNAPSHOT_DIR}/containers-inspect.json" ]; then
-        printf '%s' "$INSPECT_RAW" | redact_stream > "${SNAPSHOT_DIR}/containers-inspect.json"
-    fi
+# 2. containers-summary.json — ПРОЕКЦИЯ полей, а не сырой inspect (v3, schema 1).
+#
+#    Почему больше не пишем сырой `docker inspect`: маскировка как последняя линия
+#    обороны — это растущий чёрный список. 2026-08-08 сквозь неё прошли ключ
+#    `sb_secret_` внутри многострочного значения и приватный TLS-ключ в
+#    `Args`/`Entrypoint`. Секрет может лежать и в `Labels`, и в `Healthcheck.Test`,
+#    и в `LogConfig`. Поэтому в снимок попадает только БЕЛЫЙ СПИСОК полей, а поля,
+#    куда пользователь кладёт произвольные строки и команды, не переносятся вовсе.
+#
+#    Значения переменных окружения не сохраняются НИКОГДА — только имена (для аудита
+#    состава). Результат дополнительно проходит redact_json_deep — как страховка от
+#    приманки в имени контейнера, имени переменной или пути монтирования.
+#
+#    FAIL-CLOSED: без jq проекция невозможна (sed не умеет надёжно проецировать JSON),
+#    поэтому файл не создаётся, а в snapshot кладётся явная отметка отказа. Молча
+#    писать сырьё нельзя — именно так и утекают секреты.
+echo "  -> containers-summary.json (проекция полей, schema 1)..."
+if [ "$REDACTION_TOOL" != "jq" ]; then
+    echo "ОТКАЗ: jq недоступен — проекция containers-summary.json не выполнена." \
+        > "${SNAPSHOT_DIR}/containers-summary.SKIPPED.txt"
+    echo "     ПРЕДУПРЕЖДЕНИЕ: jq нет — containers-summary.json НЕ создан (fail-closed)."
 else
-    printf '%s' "$INSPECT_RAW" | redact_stream > "${SNAPSHOT_DIR}/containers-inspect.json"
+    # Фильтр вынесен в отдельный файл: его же применяет tests/test-inventory-scan.sh,
+    # чтобы проверяемое и работающее не разъезжались.
+    SUMMARY_FILTER="${DUMP_SCRIPT_DIR}/summary-filter.jq"
+    if [ ! -f "$SUMMARY_FILTER" ]; then
+        echo "ОШИБКА: не найден $SUMMARY_FILTER — проекция невозможна." >&2
+        exit 2
+    fi
+    : > "${SNAPSHOT_DIR}/containers-summary.json.parts"
+    printf '%s' "$DAEMONS" | while IFS='|' read -r tag ep did status; do
+        [ "$status" = "ok" ] || continue
+        raw=$(run_cmd "DOCKER_HOST='$ep' sh -c 'docker ps -a -q | xargs -r docker inspect' 2>/dev/null || echo '[]'" 2>/dev/null || echo '[]')
+        printf '%s' "$raw" \
+          | jq -f "$SUMMARY_FILTER" 2>/dev/null \
+          | jq --arg d "$tag" --arg id "$did" --arg ep "$ep" \
+               'map(. + {daemon: $d, daemon_id: $id, endpoint: $ep})' 2>/dev/null \
+          | redact_json_deep >> "${SNAPSHOT_DIR}/containers-summary.json.parts"
+    done
+    # склеиваем массивы демонов в один документ со схемой
+    jq -s '{schema_version: 1, containers: (add // [])}' \
+        "${SNAPSHOT_DIR}/containers-summary.json.parts" \
+        > "${SNAPSHOT_DIR}/containers-summary.json" 2>/dev/null \
+      || echo '{"schema_version":1,"containers":[]}' > "${SNAPSHOT_DIR}/containers-summary.json"
+    rm -f "${SNAPSHOT_DIR}/containers-summary.json.parts"
 fi
 
 # 3. Список compose-файлов на сервере
 run_remote "compose-files.txt" \
     "find /opt -name 'docker-compose.yml' -o -name 'docker-compose.yaml' 2>/dev/null | sort"
 
-# 4. Docker-сети
-run_remote "networks.txt" \
-    "docker network ls && echo '---' && docker network ls -q | xargs docker network inspect --format '{{.Name}}: {{.IPAM.Config}}' 2>/dev/null"
+# 4. Docker-сети — по каждому демону (v3)
+echo "  -> networks.txt (по каждому демону)..."
+docker_each "networks" "txt" \
+    "docker network ls; echo '---'; docker network ls -q | xargs -r docker network inspect --format '{{.Name}}: {{.IPAM.Config}}' 2>/dev/null"
 
-# 5. Docker-тома
-run_remote "volumes.txt" \
-    "docker volume ls && echo '---' && docker system df -v 2>/dev/null"
+# 5. Docker-тома — по каждому демону (v3)
+echo "  -> volumes.txt (по каждому демону)..."
+docker_each "volumes" "txt" \
+    "docker volume ls; echo '---'; docker system df -v 2>/dev/null"
 
 # 6. Ресурсы хоста (uptime, память, диск, порты, обновления APT)
 run_remote "host-resources.txt" \
@@ -299,12 +420,48 @@ run_remote "tls-certs.txt" \
 #     код, и под set -o pipefail вся секция ложно помечалась как failed
 #     (граблекейс srv-main: данные собирались, но в конец файла дописывался
 #     'ERROR: ...'). Honest-status: секция падает только при реальной ошибке.
+#     v3: раньше секция смотрела ТОЛЬКО в /opt/*.sh, /usr/local/{bin,sbin}/*.sh и
+#     /root/bin — то есть на уровень выше реальных мест. Грабля 2026-08-08: на хосте
+#     оказалось 16 скриптов, вызываемых таймерами, из /opt/backup/ и /opt/*/ops/, а
+#     inventory числил один. Теперь список строится от того, что РЕАЛЬНО запускается:
+#     обход ExecStart включённых service/timer/path-юнитов с разворачиванием обёрток
+#     вида `/bin/bash -lc '/path/script.sh'`. Прежние каталоги оставлены как дополнение
+#     (скрипт может лежать и без юнита — например, вызываться из другого скрипта).
+# shellcheck disable=SC2016
 run_remote "host-scripts-list.txt" \
-    "set +e
+    'set +e
+     echo "=== цели ExecStart включённых юнитов (service/timer/path) ==="
+     units=$(systemctl list-unit-files --type=service --type=timer --type=path --state=enabled --no-legend 2>/dev/null | awk "{print \$1}")
+     for u in $units; do
+       case "$u" in
+         systemd-*|sys-*|snap*|apt-*|man-db*|logrotate*|fstrim*|e2scrub*|xfs_scrub*|fwupd*|motd*|dpkg*|plocate*|update-notifier*|anacron*|chrony*|ua-*|ubuntu*|unattended*|sysstat*|apport*|mdadm*|mdcheck*|mdmonitor*|console-setup*|keyboard-setup*|grub*|kdump*|finalrd*|dmesg*|setvtrgb*|pollinate*|open-vm-tools*|gpu-manager*|netplan*|containerd*|docker*|ssh*|cron*|dbus*|polkit*|apparmor*) continue ;;
+       esac
+       svc="${u%.timer}"; svc="${svc%.path}"
+       case "$svc" in *.service) ;; *) svc="$svc.service" ;; esac
+       line=$(systemctl cat "$svc" 2>/dev/null | grep -m1 "^ExecStart=" | sed "s/^ExecStart=//")
+       [ -z "$line" ] && continue
+       # разворачиваем обёртки: берём первый абсолютный путь, не являющийся интерпретатором
+       target=""
+       for tok in $(printf "%s" "$line" | tr -d "\047\042"); do
+         case "$tok" in
+           /bin/bash|/bin/sh|/usr/bin/bash|/usr/bin/sh|/usr/bin/env|/usr/bin/python3|/usr/bin/python) continue ;;
+           -*) continue ;;
+           /*) target="$tok"; break ;;
+         esac
+       done
+       [ -z "$target" ] && target="$line"
+       if [ -e "$target" ]; then
+         printf "%-34s %s\n" "$svc" "$(stat -c "%a %U:%G %10s %n" "$target" 2>/dev/null)"
+       else
+         printf "%-34s ЦЕЛЬ НЕ НАЙДЕНА: %s\n" "$svc" "$target"
+       fi
+     done
+     echo
+     echo "=== дополнительно: типовые каталоги ==="
      ls -la /opt/*.sh /opt/*.py /opt/*.yml 2>/dev/null
      ls -la /usr/local/bin/*.sh /usr/local/sbin/*.sh 2>/dev/null
      ls -la /root/bin/ 2>/dev/null
-     true"
+     true'
 
 # 11. Содержимое хостовых скриптов в /opt (.sh)
 # shellcheck disable=SC2016

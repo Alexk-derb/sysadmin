@@ -36,7 +36,8 @@ inventory и выделяю drift'ы между документацией и р
 - Snapshot создан в `inventory/hosts/<host>/snapshots/YYYY-MM-DD/`
 - Snapshot содержит все ожидаемые файлы (containers, networks, volumes, host-resources,
   crontab, nginx-sites, tls-certs, host-scripts-content, host-env-redacted, cron-d-content,
-  systemd-enabled, systemd-timers, watchers, compose-files, containers-inspect.json,
+  systemd-enabled, systemd-timers, watchers, compose-files, containers-summary.json,
+  docker-endpoints.txt,
   health-flags) — проверяется по непустоте ключевых, не по суммарному размеру
 - 9 inventory-документов в `inventory/hosts/<host>/` обновлены или созданы из шаблона
   (`automations.md` — только при наличии хоть одной автоматизации)
@@ -105,7 +106,9 @@ bash scripts/dump-snapshot.sh "$SSH_HOST" "$SNAPSHOT_DATE" "$INVENTORY_DIR"
 
 Скрипт собирает (через single-shot SSH с timeout 10c):
 
-- Список и inspect контейнеров (`containers.txt`, `containers-inspect.json`)
+- Список контейнеров по КАЖДОМУ Docker-демону (`containers.txt` — объединённый,
+  `containers.<tag>.txt` — по демонам) и безопасная проекция полей
+  (`containers-summary.json`, schema 1). Карта демонов — `docker-endpoints.txt`
 - Список compose-файлов (`compose-files.txt`)
 - Docker-сети и volumes (`networks.txt`, `volumes.txt`)
 - Ресурсы хоста — uptime, память, диск, открытые порты, доступные APT-обновления
@@ -136,8 +139,12 @@ ok=1
 for f in containers.txt networks.txt host-resources.txt; do
   [ -s "$SNAPSHOT_DIR/$f" ] || { echo "ОШИБКА: пустой ключевой файл $f"; ok=0; }
 done
-jq -e . "$SNAPSHOT_DIR/containers-inspect.json" >/dev/null 2>&1 \
-  || { echo "ОШИБКА: containers-inspect.json не парсится"; ok=0; }
+jq -e '.schema_version and (.containers|type=="array")' "$SNAPSHOT_DIR/containers-summary.json" >/dev/null 2>&1 \
+  || { echo "ОШИБКА: containers-summary.json не парсится или без схемы"; ok=0; }
+# Демоны: снимок обязан честно перечислить endpoint'ы. Ни одного `ok` — это не
+# «пустой сервер», а отказ сбора: разбираться, а не считать снимок валидным.
+grep -q '|ok$' "$SNAPSHOT_DIR/docker-endpoints.txt" 2>/dev/null \
+  || { echo "ОШИБКА: ни один Docker-демон не отдал данные (см. docker-endpoints.txt)"; ok=0; }
 [ "$ok" = 1 ] || { echo "ОШИБКА: snapshot неполный"; exit 1; }
 ```
 
@@ -150,13 +157,15 @@ jq -e . "$SNAPSHOT_DIR/containers-inspect.json" >/dev/null 2>&1 \
 «мнимый drift», когда снимок просто старее обновлённого inventory):
 
 **Ось A — что изменилось на сервере** (снимок-к-снимку, стабильный источник
-`containers-inspect.json`, НЕ grep по рукописному `services.md`):
+`containers-summary.json`, НЕ grep по рукописному `services.md`). **Сравнивать только
+в пределах одного демона** — иначе смена активного контекста выглядит как исчезновение
+всех сервисов (грабля 2026-08-08):
 
 ```bash
 HOSTD="$INVENTORY_DIR/hosts/$HOST_DIR"
 PREV="$(ls -1d "$HOSTD/snapshots"/*/ 2>/dev/null | sort | tail -2 | head -1)"
-diff <(jq -r '.[].Name' "$PREV/containers-inspect.json" 2>/dev/null | sed 's#^/##' | sort) \
-     <(jq -r '.[].Name' "$SNAPSHOT_DIR/containers-inspect.json"      | sed 's#^/##' | sort)
+diff <(jq -r '.containers[] | "\(.daemon)\t\(.Name)"' "$PREV/containers-summary.json" 2>/dev/null | sort) \
+     <(jq -r '.containers[] | "\(.daemon)\t\(.Name)"' "$SNAPSHOT_DIR/containers-summary.json" | sort)
 ```
 
 **Ось B — что не задокументировано** (реальность ↔ `services.md`). `services.md` ведёт
@@ -165,7 +174,7 @@ diff <(jq -r '.[].Name' "$PREV/containers-inspect.json" 2>/dev/null | sed 's#^/#
 контейнеры):
 
 ```bash
-for name in $(jq -r '.[].Name' "$SNAPSHOT_DIR/containers-inspect.json" | sed 's#^/##'); do
+for name in $(jq -r '.containers[].Name' "$SNAPSHOT_DIR/containers-summary.json"); do
   grep -qE "^\| *$name *\|" "$HOSTD/services.md" || echo "drift+ (не задокументирован): $name"
 done
 ```
@@ -305,7 +314,7 @@ rm -rf "$LOCK"   # $INVENTORY_DIR/.scan.lock — снять в конце ИЛИ
 - **«ложный drift на все контейнеры»** — ИСПРАВЛЕНО (находка /retro 2026-06-14). Симптом:
   Шаг 3 грепал `container_name:` по `services.md`, а тот ведёт контейнеры таблицей
   `| имя | … |` → diff показывал «20 недокументированных». Лечение: ось A — снимок-к-снимку
-  по `containers-inspect.json`; ось B — таблично-aware проверка имени в `services.md`.
+  по `containers-summary.json`; ось B — таблично-aware проверка имени в `services.md`.
 - **«TLS-expiry не считается на acme.sh-хостах»** — ИСПРАВЛЕНО (находка /retro 2026-06-14).
   Симптом: `tls-certs.txt` содержал только `ls -la` (даты файлов), хотя description обещает
   «даты валидности». Причина: openssl бежал только по `/etc/letsencrypt/live`. Лечение:
@@ -316,7 +325,27 @@ rm -rf "$LOCK"   # $INVENTORY_DIR/.scan.lock — снять в конце ИЛИ
   `HOST_DIR`; при расхождении с SSH-target скрипт громко предупреждает и берёт канон.
 - **«verify заваливал валидный малый снимок»** — ИСПРАВЛЕНО (находка /retro 2026-06-14).
   Симптом: порог «размер ≥1 МБ» — false-negative на снимке 324 КБ. Лечение: проверка
-  непустоты ключевых файлов + парсинг `containers-inspect.json` через jq, не суммарный размер.
+  непустоты ключевых файлов + парсинг `containers-summary.json` через jq, не суммарный размер.
+- **«снимок видел только один Docker-демон»** — ИСПРАВЛЕНО (v3, находка 2026-08-08).
+  Симптом: `docker ps` шёл в активном контексте пользователя (`rootless`), и боевой стек
+  в снимок не попадал ВООБЩЕ; снимки за разные даты оказывались сняты с разных демонов и
+  становились несопоставимы. Лечение: перечисление отвечающих сокетов + endpoint'ов
+  контекстов, различение по daemon ID, `docker-endpoints.txt` с явной отметкой
+  `unreachable`/`duplicate-id`, файлы по демонам (`containers.<tag>.txt`).
+- **«секреты в сыром inspect»** — ИСПРАВЛЕНО ИНАЧЕ (v3). Маскировка как последняя линия
+  обороны — растущий чёрный список: 2026-08-08 сквозь неё прошли ключ `sb_secret_` из
+  многострочного значения env и приватный TLS-ключ из `Args`/`Entrypoint`. Теперь сырой
+  `docker inspect` в снимок не переносится вообще: пишется проекция белого списка полей
+  (`containers-summary.json`, фильтр `scripts/summary-filter.jq`), значения переменных
+  окружения не сохраняются никогда — только имена. Без `jq` проекция не выполняется
+  (fail-closed), вместо неё кладётся `containers-summary.SKIPPED.txt`. Проверяется
+  `tests/test-inventory-scan.sh` (приманка — opaque-маркер; «gitleaks чист» доказательством
+  не считается).
+- **«host-скрипты искались не там»** — ИСПРАВЛЕНО (v3). Симптом: список строился по
+  `/opt/*.sh`, `/usr/local/{bin,sbin}/*.sh`, `/root/bin/`, а реальные 16 скриптов лежали в
+  `/opt/backup/` и `/opt/*/ops/` — inventory числил один. Лечение: обход `ExecStart`
+  включённых service/timer/path-юнитов с разворачиванием обёрток `/bin/bash -lc '…'`;
+  прежние каталоги оставлены как дополнение.
 - **«секреты в containers-inspect.json»** — ИСПРАВЛЕНО (redaction v1). Скрипт
   маскирует env-секреты (`KEY=value` и креды в URL) **до записи на диск** —
   не полагаясь только на `.gitignore`. Метки в `meta.txt`: `redaction_applied: true`.

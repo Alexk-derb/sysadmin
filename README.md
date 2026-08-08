@@ -210,8 +210,9 @@ sysadmin/                          ← публичный репо (этот). �
 ├── infra-config.example.json      ← публичный шаблон конфига карты инфры
 ├── infra-config.schema.json       ← JSON Schema конфига карты инфры
 │
-├── tests/                         ← тесты общих библиотек (`bash tests/test-redact.sh`)
-│   └── test-redact.sh             ← маскировка секретов: приманки, fail-closed, регрессия
+├── tests/                         ← тесты (запуск: `bash tests/<файл>`)
+│   ├── test-redact.sh             ← маскировка секретов: приманки, fail-closed, регрессия
+│   └── test-inventory-scan.sh     ← проекция снимка: белый список полей, встроенная диверсия
 │
 ├── README.md                      ← этот файл (для человека)
 ├── INSTALL.md                     ← инструкция установки (для Claude Code)
