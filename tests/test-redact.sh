@@ -51,10 +51,13 @@ echo "== redact_stream: класс отказа 2026-08-08"
 out=$(printf 'kong_config: "apikey == %s"\n' "sb_secret_${CANARY}" | redact_stream)
 leaked "sb_secret_ по значению (не по имени переменной)" "$out"
 # 2) Приватный ключ PEM, многострочный — построчный sed его не видит в принципе.
-out=$(printf -- '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADAN%s\n-----END PRIVATE KEY-----\n' "$CANARY" | redact_stream)
+# Тело ключа синтетическое (приманка), но заголовок PEM настоящий, иначе тест не проверял бы
+# то, что встретится в реальном снимке. gitleaks:allow глушит РОВНО эти две строки-фикстуры —
+# правило private-key остаётся включённым везде, включая остальной файл.
+out=$(printf -- '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADAN%s\n-----END PRIVATE KEY-----\n' "$CANARY" | redact_stream) # gitleaks:allow
 leaked "многострочный PEM" "$out"
 # 3) PEM в одну строку (как внутри JSON, где переводы строк экранированы).
-out=$(printf -- '{"Entrypoint":["sh","-c","-----BEGIN PRIVATE KEY-----\\n%s\\n-----END PRIVATE KEY-----"]}\n' "$CANARY" | redact_stream)
+out=$(printf -- '{"Entrypoint":["sh","-c","-----BEGIN PRIVATE KEY-----\\n%s\\n-----END PRIVATE KEY-----"]}\n' "$CANARY" | redact_stream) # gitleaks:allow
 leaked "PEM внутри JSON-строки" "$out"
 
 echo "== redact_json_deep: секрет вне .Env (Args / Entrypoint / Labels / Healthcheck)"
