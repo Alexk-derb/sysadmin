@@ -15,3 +15,11 @@
 6a03e1d6f86406fca9b515258b861161269a3460:.claude/knowledge/networking/3x-ui-api.md:generic-api-key:276
 6a03e1d6f86406fca9b515258b861161269a3460:.claude/knowledge/networking/3x-ui-api.md:generic-api-key:277
 f82b788cc3f68368a3c78c8d401cb6b086790250:.planning/singbox-vs-xray-and-configs.md:generic-api-key:850
+
+# ── Синтетическая PEM-фикстура в тесте маскировки ────────────────────────────────────
+# `tests/test-redact.sh` проверяет, что маскировка не пропускает приватный ключ. Чтобы
+# проверка была честной, фикстура несёт НАСТОЯЩИЙ заголовок `-----BEGIN PRIVATE KEY-----`,
+# а телом подставляется приманка `CANARY_…_DO_NOT_LEAK` — ключа там нет и не было.
+# В рабочей копии строки помечены `# gitleaks:allow`; эта запись гасит их в уже созданном
+# коммите. Правило `private-key` остаётся включённым везде.
+53e98926589f34671ede1aa934ce4cf291b0efab:tests/test-redact.sh:private-key:54
