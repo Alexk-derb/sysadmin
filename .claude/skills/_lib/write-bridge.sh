@@ -37,8 +37,12 @@ write_bridge() {
         return 1
     fi
     # Путь уезжает в файл и читается с ЛЮБОЙ рабочей папки — относительный там бессмыслен.
+    # Абсолютным считается и POSIX-путь, и родной виндовый (C:/… либо C:\…): на Windows
+    # вызывающий может передать именно такой, и отказ ломал бы установку (найдено сверкой
+    # 2026-08-20).
     case "$sysadmin_root" in
         /*) ;;
+        [A-Za-z]:/*|[A-Za-z]:\\*) ;;
         *)
             echo "write_bridge: путь к корню должен быть абсолютным, получено: $sysadmin_root" >&2
             return 1
@@ -49,6 +53,12 @@ write_bridge() {
         return 1
     fi
     sysadmin_root="${sysadmin_root%/}"
+    # Указатель ведёт на ядро персоны. Каталог без CLAUDE.md мозгом не является, и bridge
+    # на него — указатель в пустоту, который обнаружится только при вызове @sysadmin.
+    if [ ! -f "$sysadmin_root/CLAUDE.md" ]; then
+        echo "write_bridge: в каталоге нет CLAUDE.md — это не корень мозга: $sysadmin_root" >&2
+        return 1
+    fi
 
     if [ -z "${HOME:-}" ]; then
         echo "write_bridge: не задан \$HOME — некуда класть bridge." >&2
@@ -57,12 +67,19 @@ write_bridge() {
 
     local bridge_dir="$HOME/.claude/agents"
     local bridge="$bridge_dir/sysadmin.md"
-    local tmp="$bridge.tmp.$$"
-
     if ! mkdir -p "$bridge_dir" 2>/dev/null; then
         echo "WARN: не создать $bridge_dir — bridge пропускаю, @sysadmin из чужих папок будет недоступен." >&2
         return 1
     fi
+
+    # Имя временного файла не должно быть предсказуемым: `$$` угадывается, и заранее
+    # подложенная символическая ссылка увела бы запись в чужой файл (находка сверки
+    # 2026-08-20). mktemp создаёт файл атомарно и с правами 0600.
+    local tmp
+    tmp="$(mktemp "$bridge_dir/.sysadmin-bridge.XXXXXX" 2>/dev/null)" || {
+        echo "write_bridge: не создать временный файл в $bridge_dir" >&2
+        return 1
+    }
 
     # Репозиторий в облачной синхронизации — файлы расходятся между машинами (перенесено
     # из INSTALL.md Шаг 7, чтобы предупреждение не потерялось вместе со вторым генератором).
@@ -105,16 +122,28 @@ EOF
         return 1
     fi
 
-    # Постусловие на временном файле — ДО того, как он станет боевым.
-    if [ ! -s "$tmp" ] || ! grep -qF "$sysadmin_root/CLAUDE.md" "$tmp"; then
+    # Постусловие на временном файле — ДО того, как он станет боевым. Проверяются обе
+    # обязательные части: путь к ядру и frontmatter (без `name:`/`description:` файл не
+    # является определением агента — находка сверки 2026-08-20).
+    if [ ! -s "$tmp" ] \
+       || ! grep -qF "$sysadmin_root/CLAUDE.md" "$tmp" \
+       || ! grep -qE '^name: sysadmin$' "$tmp" \
+       || ! grep -qE '^description: .+' "$tmp"; then
         rm -f "$tmp"
-        echo "write_bridge: временный файл пуст или не содержит путь к ядру — bridge не заменён." >&2
+        echo "write_bridge: временный файл неполон (путь к ядру или frontmatter) — bridge не заменён." >&2
         return 1
     fi
 
-    # Бэкап прежнего указателя (перенесено из INSTALL.md Шаг 7).
+    # Бэкап прежнего указателя (перенесено из INSTALL.md Шаг 7). Молчаливый провал бэкапа
+    # недопустим: дальше идёт замена, и без копии прежний указатель исчезнет безвозвратно.
+    local backup=""
     if [ -f "$bridge" ]; then
-        cp -p "$bridge" "$bridge.bak.$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+        backup="$bridge.bak.$(date +%Y%m%d-%H%M%S)"
+        if ! cp -p "$bridge" "$backup" 2>/dev/null; then
+            rm -f "$tmp"
+            echo "write_bridge: не удалось сохранить копию прежнего указателя — замену не делаю." >&2
+            return 1
+        fi
     fi
 
     if ! mv -f "$tmp" "$bridge" 2>/dev/null; then
@@ -123,9 +152,17 @@ EOF
         return 1
     fi
 
-    # Финальное постусловие — уже на цели.
+    # Финальное постусловие — уже на цели. Не прошло — возвращаю прежний указатель из копии:
+    # оставить оператора и без нового, и без старого хуже, чем откатиться.
     if [ ! -s "$bridge" ] || ! grep -qF "$sysadmin_root/CLAUDE.md" "$bridge"; then
         echo "write_bridge: после записи $bridge не проходит проверку — считаю неудачей." >&2
+        if [ -n "$backup" ] && [ -f "$backup" ]; then
+            if cp -p "$backup" "$bridge" 2>/dev/null; then
+                echo "write_bridge: прежний указатель восстановлен из $backup" >&2
+            else
+                echo "write_bridge: восстановить прежний указатель НЕ удалось, копия лежит в $backup" >&2
+            fi
+        fi
         return 1
     fi
 

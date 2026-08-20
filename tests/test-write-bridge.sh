@@ -47,7 +47,9 @@ trap cleanup EXIT
 use_home() { HOME="$TMPROOT/home-$1"; mkdir -p "$HOME"; export HOME; }
 bridge_file() { printf '%s' "$HOME/.claude/agents/sysadmin.md"; }
 
-BRAIN="$TMPROOT/brain"; mkdir -p "$BRAIN"
+# Корень мозга — каталог с CLAUDE.md: указатель ведёт именно на ядро, и helper обязан
+# отвергать каталоги без него (находка сверки 2026-08-20).
+BRAIN="$TMPROOT/brain"; mkdir -p "$BRAIN"; : > "$BRAIN/CLAUDE.md"
 
 echo "== 1. Успешная запись"
 use_home ok
@@ -57,6 +59,10 @@ f="$(bridge_file)"
 [ -s "$f" ]; check $? "файл создан и непустой"
 grep -qF "$BRAIN/CLAUDE.md" "$f"; check $? "внутри путь к ядру"
 grep -qE '^name: sysadmin$' "$f"; check $? "frontmatter содержит name: sysadmin"
+# Без description файл не является определением агента: поле обязательно по контракту
+# Claude Code, а его пропажа не ломает ни одного другого теста (диверсант сверки 2026-08-20).
+grep -qE '^description: .+' "$f"; check $? "frontmatter содержит непустой description"
+grep -qE '^model: ' "$f"; check $? "frontmatter содержит model"
 grep -qF "Скиллы репозитория указатель не переносит" "$f"; check $? "граница про скиллы описана"
 printf '%s' "$out" | grep -qF "$SUCCESS_MARK"; check $? "напечатана строка успеха"
 
@@ -87,8 +93,15 @@ out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
 unset -f cat
 [ "$rc" -ne 0 ]; check $? "код возврата не ноль"
 if printf '%s' "$out" | grep -qF "$SUCCESS_MARK"; then bad "напечатан успех при провалившейся записи"; else ok "строка успеха не напечатана"; fi
+# Проверяется и ПРИЧИНА: если отказ записи не останавливает работу, тот же ненулевой код
+# вернёт следующая защита, но сообщение будет о другом — оператор пойдёт чинить не то.
+printf '%s' "$out" | grep -qF "не удалось записать временный файл"; check $? "причина отказа названа верно"
+# И ровно одна причина: если отказ записи не прерывает работу, следом отработает постусловие
+# и добавит вторую жалобу о том же событии. Две причины на один отказ — признак, что защита
+# не остановила выполнение.
+if printf '%s' "$out" | grep -qF "временный файл неполон"; then bad "к отказу приписана вторая, ложная причина"; else ok "причина отказа ровно одна"; fi
 [ ! -e "$(bridge_file)" ]; check $? "битый файл не оставлен"
-if ls "$HOME/.claude/agents/"sysadmin.md.tmp.* >/dev/null 2>&1; then bad "временный файл остался"; else ok "временный файл убран"; fi
+if ls "$HOME/.claude/agents/".sysadmin-bridge.* >/dev/null 2>&1; then bad "временный файл остался"; else ok "временный файл убран"; fi
 
 echo "== 2в. Каталог агентов занят файлом"
 use_home dirbusy
@@ -112,7 +125,31 @@ if printf '%s' "$out" | grep -qF "$SUCCESS_MARK"; then bad "относитель
 
 out="$(write_bridge "$TMPROOT/no-such-dir" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ]; check $? "несуществующий каталог: код возврата не ноль"
+# Причина отказа обязана быть настоящей: без проверки существования тот же отказ выдаст
+# проверка CLAUDE.md, и оператор пойдёт искать не ту неисправность.
+printf '%s' "$out" | grep -qF "каталог не существует"; check $? "несуществующий каталог: причина названа верно"
 [ ! -e "$f" ]; check $? "несуществующий каталог: файл не создан"
+
+echo "== 3д. Каталог без CLAUDE.md — не корень мозга"
+use_home nobrain
+NOBRAIN="$TMPROOT/not-a-brain"; mkdir -p "$NOBRAIN"
+out="$(write_bridge "$NOBRAIN" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ]; check $? "каталог без CLAUDE.md: код возврата не ноль"
+if printf '%s' "$out" | grep -qF "$SUCCESS_MARK"; then bad "каталог без CLAUDE.md: напечатан успех"; else ok "каталог без CLAUDE.md: без строки успеха"; fi
+[ ! -e "$(bridge_file)" ]; check $? "каталог без CLAUDE.md: файл не создан"
+
+echo "== 3е. Родной виндовый путь принимается"
+# На Windows вызывающий передаёт C:/… — отказ ломал бы установку. Проверяем только там,
+# где такой путь вообще существует; на прочих системах кейс громко пропускается.
+if command -v cygpath >/dev/null 2>&1; then
+    use_home winpath
+    WINBRAIN="$(cygpath -m "$BRAIN")"
+    out="$(write_bridge "$WINBRAIN" 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ]; check $? "путь вида C:/… принят"
+    grep -qF "$WINBRAIN/CLAUDE.md" "$(bridge_file)"; check $? "в указателе записан виндовый путь"
+else
+    skip "родной виндовый путь" "нет cygpath — система не Windows"
+fi
 
 echo "== 3б. Относительный путь отвергается, даже когда он существует"
 # Без этого кейса проверку абсолютности подменяет проверка существования каталога:
@@ -138,6 +175,10 @@ out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
 unset -f cat
 [ "$rc" -ne 0 ]; check $? "код возврата не ноль"
 [ "$(command cat "$(bridge_file)")" = "$before" ]; check $? "прежний указатель уцелел"
+# Уцелел он должен потому, что замены НЕ БЫЛО, а не потому, что откатили после разрушения.
+# Иначе постусловие на временном файле можно снять незаметно: восстановление из копии скроет
+# разницу, а боевой указатель успеет побывать битым.
+if printf '%s' "$out" | grep -qF "восстановлен из"; then bad "указатель был заменён и откачен, а не сохранён нетронутым"; else ok "замены не было вовсе"; fi
 
 echo "== 3г. Подмена файла провалилась молча — helper обязан это заметить"
 # Смысл ФИНАЛЬНОГО постусловия: mv может вернуть 0, не сделав работу.
@@ -158,14 +199,14 @@ printf '%s' "$out" | grep -qF "не задан \$HOME"; check $? "причина
 
 echo "== 5. Повторный вызов: бэкап прежнего и свежий путь"
 use_home again
-OLD="$TMPROOT/brain-old"; mkdir -p "$OLD"
+OLD="$TMPROOT/brain-old"; mkdir -p "$OLD"; : > "$OLD/CLAUDE.md"
 write_bridge "$OLD"   >/dev/null 2>&1
 write_bridge "$BRAIN" >/dev/null 2>&1; rc=$?
 f="$(bridge_file)"
 [ "$rc" -eq 0 ]; check $? "повторный вызов успешен"
 grep -qF "$BRAIN/CLAUDE.md" "$f"; check $? "путь обновлён на свежий"
 ls "$HOME/.claude/agents/"sysadmin.md.bak.* >/dev/null 2>&1; check $? "прежний указатель сохранён в бэкап"
-if ls "$HOME/.claude/agents/"sysadmin.md.tmp.* >/dev/null 2>&1; then bad "временный файл остался"; else ok "временный файл не остался"; fi
+if ls "$HOME/.claude/agents/".sysadmin-bridge.* >/dev/null 2>&1; then bad "временный файл остался"; else ok "временный файл не остался"; fi
 
 echo "== 6. Хвостовой слэш не удваивается"
 use_home slash
@@ -174,7 +215,7 @@ if grep -qF "$BRAIN//" "$(bridge_file)"; then bad "в пути появился 
 
 echo "== 7. Предупреждение про облачную папку — только когда уместно"
 use_home cloud
-CLOUD="$TMPROOT/Dropbox/sysadmin"; mkdir -p "$CLOUD"
+CLOUD="$TMPROOT/Dropbox/sysadmin"; mkdir -p "$CLOUD"; : > "$CLOUD/CLAUDE.md"
 write_bridge "$CLOUD" >/dev/null 2>&1
 grep -qF "облачной синхронизации" "$(bridge_file)"; check $? "для облачной папки предупреждение есть"
 
