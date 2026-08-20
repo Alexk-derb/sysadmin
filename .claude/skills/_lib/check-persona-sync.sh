@@ -123,7 +123,7 @@ TTL_FLAT="$(tr '\n' ' ' < "$PERSONA" | tr -s ' ')"
 
 check_layer_ttl() {
     local layer="$1" want="$2"
-    local frag
+    local frag num
     # ВСЕ упоминания слоя, а не первое: ядро называет слои дважды (§4.2 и §8.1),
     # и проверка по head -1 пропускала расхождение во втором месте.
     while IFS= read -r frag; do
@@ -134,7 +134,20 @@ check_layer_ttl() {
             note_fail "C4: слой ${layer} в выжимке — ожидается TTL ${want}; фрагмент: ${frag}"
             BAD_TTL=$((BAD_TTL+1))
         fi
-    done < <(printf '%s' "$TTL_FLAT" | grep -oE "${layer}.{0,40}")
+        # Присутствия верного числа мало: рядом может стоять и неверное, и тогда
+        # верное его маскирует (мутант «15 дн для _live/ (было 14 дн)», 2026-08-20).
+        # Любой срок рядом с именем слоя обязан принадлежать канону 14/60/365.
+        while IFS= read -r num; do
+            [ -z "$num" ] && continue
+            case "$num" in
+                14|60|365) ;;
+                *)
+                    note_fail "C4: рядом со слоем ${layer} стоит внеканонный срок ${num} дн; фрагмент: ${frag}"
+                    BAD_TTL=$((BAD_TTL+1))
+                    ;;
+            esac
+        done < <(printf '%s' "$frag" | grep -oE '[0-9]+ *дн' | grep -oE '[0-9]+')
+    done < <(printf "%s" "$TTL_FLAT" | grep -oE ".{0,40}${layer}.{0,40}")
     return 0
 }
 check_layer_ttl "_live/" 14
@@ -160,8 +173,18 @@ if [ -f "$COLDSTART" ]; then
             C5=$((C5+1))
         fi
     done < "$CS_FILE"
+    # Обратное направление: шаг, выдуманный в ядре и не раскрытый в cold-start.md.
+    # Односторонняя проверка обещала «совпадение наборов», а ловила только пропажу
+    # (мутант «Шаг 9 в ядре» выживал; сверка 2026-08-20).
+    while IFS= read -r s; do
+        [ -z "$s" ] && continue
+        if ! LC_ALL=C grep -qx "$s" "$CS_FILE"; then
+            note_fail "C5: Шаг $s назван в выжимке, но не раскрыт в cold-start.md (указатель в пустоту)"
+            C5=$((C5+1))
+        fi
+    done < "$PS_FILE"
     rm -f "$PS_FILE" "$CS_FILE"
-    [ "$C5" -eq 0 ] && note_ok "все шаги Cold Start из cold-start.md присутствуют в выжимке"
+    [ "$C5" -eq 0 ] && note_ok "наборы шагов Cold Start совпадают в обоих слоях"
     echo
 fi
 

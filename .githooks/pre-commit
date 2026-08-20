@@ -16,7 +16,7 @@
 set -u
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-STAGED="$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null)"
+STAGED="$(git diff --cached --name-only --diff-filter=ACMRDT 2>/dev/null)"  # D и T тоже: удаление reference и подмена файла ссылкой — тоже правка персоны
 FAIL=0
 
 # ===========================================================================
@@ -50,18 +50,27 @@ if [ "$PERSONA_TOUCHED" -eq 1 ]; then
             ;;
     esac
 
-    # --- линтер согласованности слоёв -------------------------------------
+    # --- линтер согласованности слоёв — ПО STAGED-СНИМКУ, не по рабочему дереву -
+    # Рабочее дерево и индекс расходятся: можно поставить в индекс неверный TTL,
+    # вернуть верный на диск и получить зелёный хук с неверным коммитом (сверка
+    # 2026-08-20). Поэтому индекс выгружается во временный каталог и линтер идёт
+    # по нему; при неудаче выгрузки — честный отказ, а не молчаливый пропуск.
     LINTER="$ROOT/.claude/skills/_lib/check-persona-sync.sh"
     if [ ! -f "$LINTER" ]; then
         echo "⚠️  pre-commit: персона меняется, но линтер не найден ($LINTER) — пропускаю проверку." >&2
     else
-        echo "pre-commit: коммит трогает персону → проверяю согласованность слоёв…" >&2
-        if ! bash "$LINTER" --root "$ROOT" >&2; then
+        echo "pre-commit: коммит трогает персону → проверяю согласованность слоёв (staged-снимок)…" >&2
+        SNAP="$(mktemp -d)"
+        if ! git checkout-index -a --prefix="$SNAP/" 2>/dev/null; then
+            echo "❌ pre-commit: не удалось выгрузить индекс во временный каталог — проверка не выполнена." >&2
+            FAIL=1
+        elif ! bash "$LINTER" --root "$SNAP" >&2; then
             echo >&2
-            echo "❌ pre-commit: персона рассинхронизирована (выжимка ↔ references)." >&2
-            echo "   Синхронизируй ядро CLAUDE.md и references/ (см. CLAUDE.md «персона двухслойна»)." >&2
+            echo "❌ pre-commit: персона рассинхронизирована в том, что уходит в коммит (выжимка ↔ references)." >&2
+            echo "   Синхронизируй ядро CLAUDE.md и references/ и добавь их в индекс (git add)." >&2
             FAIL=1
         fi
+        rm -rf "$SNAP"
     fi
 
     # --- staged-проекция: ссылки ядра существуют В ИНДЕКСЕ, а не на диске ---
