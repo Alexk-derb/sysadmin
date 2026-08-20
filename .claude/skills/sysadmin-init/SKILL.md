@@ -360,7 +360,13 @@ rm -rf "$WORKDIR"   # запись подтверждена — чистим в�
 указатель на `sysadmin/` (его читают `find-config.sh` и сам агент за ядром CLAUDE.md,
 ADR-0015). Создание — единый helper `_lib/write-bridge.sh` (один источник, не копия heredoc).
 
+Блок самодостаточен: `$LIB` и `$SYSADMIN_ROOT` задаются здесь же. Каждый вызов Bash —
+отдельный процесс, и переменные из предыдущих шагов до этого блока не доживают (найдено
+сверкой 2026-08-20).
+
 ```bash
+SYSADMIN_ROOT="${SYSADMIN_ROOT:-$(cd "$(dirname "$0")/../../.." 2>/dev/null && pwd)}"
+LIB="${LIB:-$SYSADMIN_ROOT/.claude/skills/_lib}"
 source "$LIB/write-bridge.sh"
 if ! write_bridge "$SYSADMIN_ROOT"; then
     # rc=1 — указатель НЕ записан (нет прав, неверный путь, не прошло постусловие).

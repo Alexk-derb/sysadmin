@@ -57,9 +57,15 @@ write_bridge() {
     # (`_is_sysadmin_root` в find-config.sh): маркер `.sysadmin-root` либо пара «CLAUDE.md +
     # .claude/skills». Одного CLAUDE.md мало — он есть у множества чужих репозиториев, и
     # указатель на такой каталог обнаружился бы только при вызове @sysadmin (сверка 2026-08-20).
-    if [ ! -f "$sysadmin_root/.sysadmin-root" ] \
-       && ! { [ -f "$sysadmin_root/CLAUDE.md" ] && [ -d "$sysadmin_root/.claude/skills" ]; }; then
-        echo "write_bridge: это не корень мозга (нет .sysadmin-root и нет пары CLAUDE.md + .claude/skills): $sysadmin_root" >&2
+    # CLAUDE.md обязателен всегда: указатель ведёт именно на него. Одного маркера мало —
+    # каталог с маркером, но без ядра даёт успешную запись указателя в пустоту (сверка
+    # 2026-08-20). Второй признак — маркер либо каталог скиллов, как у читателя.
+    if [ ! -f "$sysadmin_root/CLAUDE.md" ]; then
+        echo "write_bridge: в каталоге нет CLAUDE.md — указатель вёл бы в пустоту: $sysadmin_root" >&2
+        return 1
+    fi
+    if [ ! -f "$sysadmin_root/.sysadmin-root" ] && [ ! -d "$sysadmin_root/.claude/skills" ]; then
+        echo "write_bridge: это не корень мозга (нет ни .sysadmin-root, ни .claude/skills): $sysadmin_root" >&2
         return 1
     fi
 
@@ -143,7 +149,15 @@ EOF
     # недопустим: дальше идёт замена, и без копии прежний указатель исчезнет безвозвратно.
     local backup=""
     if [ -f "$bridge" ]; then
-        backup="$bridge.bak.$(date +%Y%m%d-%H%M%S)"
+        # Цель — символическая ссылка: mv заменит её обычным файлом, и то, на что она вела,
+        # перестанет обновляться. Молчать об этом нельзя (сверка 2026-08-20).
+        if [ -L "$bridge" ]; then
+            echo "WARN: $bridge был символической ссылкой на $(readlink "$bridge" 2>/dev/null) — заменяю обычным файлом." >&2
+        fi
+        # Секундная метка одна на два одновременных запуска — добавляю случайный хвост,
+        # иначе вторая копия затирает первую.
+        backup="$(mktemp "$bridge.bak.$(date +%Y%m%d-%H%M%S).XXXXXX" 2>/dev/null)" \
+            || backup="$bridge.bak.$(date +%Y%m%d-%H%M%S).$$"
         if ! cp -p "$bridge" "$backup" 2>/dev/null; then
             rm -f "$tmp"
             echo "write_bridge: не удалось сохранить копию прежнего указателя — замену не делаю." >&2

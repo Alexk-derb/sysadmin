@@ -144,6 +144,22 @@ out="$(write_bridge "$NOBRAIN" 2>&1)"; rc=$?
 if printf '%s' "$out" | grep -qF "$SUCCESS_MARK"; then bad "каталог без CLAUDE.md: напечатан успех"; else ok "каталог без CLAUDE.md: без строки успеха"; fi
 [ ! -e "$(bridge_file)" ]; check $? "каталог без CLAUDE.md: файл не создан"
 
+echo "== 1б. Контракт писатель → читатель (интеграционно, на настоящем резолвере)"
+# Главная дыра, найденная сверкой 2026-08-20: набор проверял ТЕКСТ указателя, но никогда —
+# что его читает настоящий locate_sysadmin_root. Из-за этого мимо прошли два дефекта:
+# читатель требовал, чтобы путь оканчивался на «sysadmin», и ломался от снятых обратных
+# кавычек. Тест поднимает мозг в каталоге с ЧУЖИМ именем и требует, чтобы резолвер вернул
+# именно его.
+use_home roundtrip
+ODDNAME="$TMPROOT/ops-brain"; mkdir -p "$ODDNAME/.claude/skills"; : > "$ODDNAME/CLAUDE.md"; : > "$ODDNAME/.sysadmin-root"
+write_bridge "$ODDNAME" >/dev/null 2>&1; check $? "указатель записан для каталога с именем не sysadmin"
+(
+    # shellcheck source=/dev/null
+    source "$ROOT/.claude/skills/_lib/find-config.sh"
+    locate_sysadmin_root >/dev/null 2>&1
+    [ "$(cd "$SYSADMIN_ROOT" 2>/dev/null && pwd -P)" = "$(cd "$ODDNAME" && pwd -P)" ]
+); check $? "настоящий locate_sysadmin_root вернул тот же каталог"
+
 echo "== 3ж. Чужой каталог с CLAUDE.md корнем мозга не считается"
 # CLAUDE.md есть у множества репозиториев. Признак корня должен совпадать с тем, по которому
 # указатель ЧИТАЕТСЯ (find-config.sh): маркер .sysadmin-root либо CLAUDE.md + .claude/skills.
@@ -152,6 +168,27 @@ FOREIGN="$TMPROOT/foreign-repo"; mkdir -p "$FOREIGN"; : > "$FOREIGN/CLAUDE.md"
 out="$(write_bridge "$FOREIGN" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ]; check $? "чужой репозиторий с CLAUDE.md отвергнут"
 [ ! -e "$(bridge_file)" ]; check $? "чужой репозиторий: файл не создан"
+
+echo "== 5б. Провал бэкапа останавливает замену"
+# Копия делается ПЕРЕД подменой именно для того, чтобы прежний указатель пережил неудачу.
+# Если провал `cp` игнорировать, замена всё равно произойдёт — уже без страховки.
+use_home backupfail
+write_bridge "$BRAIN" >/dev/null 2>&1
+before_hash="$(command cat "$(bridge_file)" | cksum)"
+cp() { return 1; }
+out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
+unset -f cp
+[ "$rc" -ne 0 ]; check $? "провал бэкапа: код возврата не ноль"
+printf '%s' "$out" | grep -qF "не удалось сохранить копию"; check $? "провал бэкапа: причина названа верно"
+[ "$(command cat "$(bridge_file)" | cksum)" = "$before_hash" ]; check $? "провал бэкапа: прежний указатель не заменён"
+
+echo "== 3и. Маркер без CLAUDE.md корнем не считается"
+# Указатель ведёт на CLAUDE.md. Каталог с маркером, но без ядра — успешная запись в пустоту.
+use_home markeronly
+MARKONLY="$TMPROOT/marker-only"; mkdir -p "$MARKONLY"; : > "$MARKONLY/.sysadmin-root"
+out="$(write_bridge "$MARKONLY" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ]; check $? "маркер без CLAUDE.md отвергнут"
+printf '%s' "$out" | grep -qF "указатель вёл бы в пустоту"; check $? "маркер без CLAUDE.md: причина названа верно"
 
 echo "== 3з. Корень по маркеру .sysadmin-root принимается"
 use_home marker
