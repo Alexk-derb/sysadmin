@@ -26,6 +26,11 @@ PERSONA_TOUCHED=0
 case "$STAGED" in *"CLAUDE.md"*)                  PERSONA_TOUCHED=1 ;; esac  # ядро (ADR-0015)
 case "$STAGED" in *".claude/agents/sysadmin.md"*) PERSONA_TOUCHED=1 ;; esac  # legacy/заглушка
 case "$STAGED" in *".claude/agents/references/"*) PERSONA_TOUCHED=1 ;; esac
+case "$STAGED" in *".claude/skills/_lib/check-persona-sync.sh"*) PERSONA_TOUCHED=1 ;; esac  # сам линтер
+case "$STAGED" in *".githooks/"*)                 PERSONA_TOUCHED=1 ;; esac  # сами хуки
+case "$STAGED" in *".gitattributes"*)             PERSONA_TOUCHED=1 ;; esac  # LF-контракт ядра
+# Сторож обязан охранять и себя: правка линтера, хуков или .gitattributes раньше не
+# включала проверки, и мутант «линтер = exit 0» проходил (сверка 2026-08-20).
 
 if [ "$PERSONA_TOUCHED" -eq 1 ]; then
     # --- бюджет ядра CLAUDE.md (ADR-0016, анти-храповик) -------------------
@@ -60,6 +65,21 @@ if [ "$PERSONA_TOUCHED" -eq 1 ]; then
         echo "⚠️  pre-commit: персона меняется, но линтер не найден ($LINTER) — пропускаю проверку." >&2
     else
         echo "pre-commit: коммит трогает персону → проверяю согласованность слоёв (staged-снимок)…" >&2
+        # --- приманка: линтер обязан краснеть на заведомо битом входе ------
+        # Сторож не проверяется запуском самого себя: подменённый на «exit 0» линтер
+        # проходит любую проверку, где его же и спрашивают (мутант 2026-08-20).
+        # Поэтому сначала — приманка: ядро со ссылкой в пустоту. Не покраснел на ней —
+        # значит сломан или подменён, и его зелёный на настоящем ядре ничего не значит.
+        CANARY="$(mktemp -d)"
+        mkdir -p "$CANARY/.claude/agents/references"
+        printf 'Ссылка в пустоту: `references/canary-missing.md`\n' > "$CANARY/CLAUDE.md"
+        if bash "$LINTER" --root "$CANARY" >/dev/null 2>&1; then
+            echo "❌ pre-commit: линтер персоны НЕ краснеет на приманке — сторож сломан или подменён." >&2
+            echo "   Проверь .claude/skills/_lib/check-persona-sync.sh: его зелёный сейчас ничего не значит." >&2
+            FAIL=1
+        fi
+        rm -rf "$CANARY"
+
         SNAP="$(mktemp -d)"
         if ! git checkout-index -a --prefix="$SNAP/" 2>/dev/null; then
             echo "❌ pre-commit: не удалось выгрузить индекс во временный каталог — проверка не выполнена." >&2
@@ -83,6 +103,14 @@ if [ "$PERSONA_TOUCHED" -eq 1 ]; then
             [ -z "$ref" ] && continue
             if ! git cat-file -e ":.claude/agents/$ref" 2>/dev/null; then
                 MISSING_IN_INDEX="$MISSING_IN_INDEX $ref"
+                continue
+            fi
+            # Существования мало: symlink или gitlink на месте документа тоже «есть».
+            # Режим обычного файла утверждается явно (сверка 2026-08-20).
+            REF_MODE="$(git ls-files --stage -- ".claude/agents/$ref" 2>/dev/null | cut -d" " -f1)"
+            if [ "$REF_MODE" != "100644" ]; then
+                echo "❌ pre-commit: $ref в индексе не обычный файл (режим ${REF_MODE:-неизвестен})." >&2
+                FAIL=1
             fi
         done < <(git cat-file blob :CLAUDE.md | grep -oE 'references/[^[:space:]`*(),;"]+\.md' | sort -u)
         if [ -n "$MISSING_IN_INDEX" ]; then
