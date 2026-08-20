@@ -134,9 +134,25 @@ self_test_setup() {
         fi
     fi
 
-    # 6. bridge-файл
-    if [ ! -f "$HOME/.claude/agents/sysadmin.md" ]; then
+    # 6. bridge-файл. Наличия мало: пустой файл, файл без frontmatter или указатель на
+    # несуществующий каталог выглядят «на месте», а @sysadmin из чужой папки не работает
+    # (находка сверки 2026-08-20 — проверка была ложно-зелёной).
+    local _stp_bridge="$HOME/.claude/agents/sysadmin.md"
+    if [ ! -f "$_stp_bridge" ]; then
         _stp_add "Нет bridge-файла ~/.claude/agents/sysadmin.md — @sysadmin не вызвать из других папок."
+    elif [ ! -s "$_stp_bridge" ]; then
+        _stp_add "Bridge-файл ~/.claude/agents/sysadmin.md пуст — @sysadmin не заработает."
+    elif ! grep -qE '^name: sysadmin$' "$_stp_bridge" || ! grep -qE '^description: .+' "$_stp_bridge"; then
+        _stp_add "В bridge-файле нет обязательного frontmatter (name/description) — агент не будет найден."
+    else
+        local _stp_root
+        _stp_root="$(grep -oE '\*\*`[^`]+`\*\*' "$_stp_bridge" | head -1 | tr -d '*`')"
+        _stp_root="${_stp_root%/}"
+        if [ -z "$_stp_root" ]; then
+            _stp_add "В bridge-файле не найден путь к мозгу — указатель испорчен."
+        elif [ ! -f "$_stp_root/CLAUDE.md" ]; then
+            _stp_add "Bridge ведёт на $_stp_root, но там нет CLAUDE.md — указатель в пустоту."
+        fi
     fi
 
     if [ -n "$problems" ]; then
