@@ -28,14 +28,19 @@ G() { git -c user.name=test -c user.email=test@example.com -C "$1" "${@:2}"; }
 run_drift() { bash "$DRIFT_SH" "$1" 2>&1; }
 
 # --- фикстуры -------------------------------------------------------------
+# Имя ветки задаётся явно: у git оно зависит от init.defaultBranch и различается между
+# машинами (на ноутбуке было master, на сервере main). Фикстура, привязанная к имени по
+# умолчанию, зелена на одной машине и падает на другой — проверено 2026-08-20.
+BR=work
 git init -q --bare "$TMP/origin.git"
-git clone -q "$TMP/origin.git" "$TMP/a"
+git -C "$TMP/origin.git" symbolic-ref HEAD "refs/heads/$BR"
+git clone -q "$TMP/origin.git" "$TMP/a" 2>/dev/null
+G "$TMP/a" checkout -q -B "$BR"
 echo "первая строка" > "$TMP/a/inventory.md"
 G "$TMP/a" add inventory.md
 G "$TMP/a" commit -q -m "первый коммит"
-G "$TMP/a" push -q origin HEAD:refs/heads/master
-G "$TMP/a" branch -q --set-upstream-to=origin/master 2>/dev/null
-git clone -q "$TMP/origin.git" "$TMP/b"
+G "$TMP/a" push -q -u origin "$BR"
+git clone -q "$TMP/origin.git" "$TMP/b" 2>/dev/null
 
 echo "== 1. Копия в ногу и чистая"
 out="$(run_drift "$TMP/a")"; rc=$?
@@ -51,7 +56,7 @@ printf '%s' "$out" | grep -qF "впереди 1"; check $? "распознано
 [ "$rc" -ne 0 ]; check $? "код возврата ненулевой"
 
 echo "== 3. Копия отстала"
-G "$TMP/a" push -q origin master
+G "$TMP/a" push -q origin "$BR"
 out="$(run_drift "$TMP/b")"; rc=$?
 printf '%s' "$out" | grep -qF "отстал 1"; check $? "распознано «отстал 1»"
 [ "$rc" -ne 0 ]; check $? "код возврата ненулевой"
