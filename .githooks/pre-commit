@@ -55,43 +55,70 @@ if [ "$PERSONA_TOUCHED" -eq 1 ]; then
             ;;
     esac
 
-    # --- линтер согласованности слоёв — ПО STAGED-СНИМКУ, не по рабочему дереву -
-    # Рабочее дерево и индекс расходятся: можно поставить в индекс неверный TTL,
-    # вернуть верный на диск и получить зелёный хук с неверным коммитом (сверка
-    # 2026-08-20). Поэтому индекс выгружается во временный каталог и линтер идёт
-    # по нему; при неудаче выгрузки — честный отказ, а не молчаливый пропуск.
-    LINTER="$ROOT/.claude/skills/_lib/check-persona-sync.sh"
-    if [ ! -f "$LINTER" ]; then
-        echo "⚠️  pre-commit: персона меняется, но линтер не найден ($LINTER) — пропускаю проверку." >&2
+    # --- линтер согласованности слоёв — ПО STAGED-СНИМКУ, включая сам линтер ---
+    # Рабочее дерево и индекс расходятся, и это касается не только персоны, но и
+    # сторожа: можно положить в индекс «exit 0», оставить исправный линтер на диске,
+    # пройти приманку рабочим линтером и закоммитить сломанный (сверка 2026-08-20).
+    # Поэтому индекс выгружается целиком, и запускается ИМЕННО ТОТ линтер, что уходит
+    # в коммит. Нет его в индексе — отказ, а не предупреждение с продолжением.
+    SNAP="$(mktemp -d)"
+    if ! git checkout-index -a --prefix="$SNAP/" 2>/dev/null; then
+        echo "❌ pre-commit: не удалось выгрузить индекс во временный каталог — проверка не выполнена." >&2
+        FAIL=1
     else
-        echo "pre-commit: коммит трогает персону → проверяю согласованность слоёв (staged-снимок)…" >&2
-        # --- приманка: линтер обязан краснеть на заведомо битом входе ------
-        # Сторож не проверяется запуском самого себя: подменённый на «exit 0» линтер
-        # проходит любую проверку, где его же и спрашивают (мутант 2026-08-20).
-        # Поэтому сначала — приманка: ядро со ссылкой в пустоту. Не покраснел на ней —
-        # значит сломан или подменён, и его зелёный на настоящем ядре ничего не значит.
-        CANARY="$(mktemp -d)"
-        mkdir -p "$CANARY/.claude/agents/references"
-        printf 'Ссылка в пустоту: `references/canary-missing.md`\n' > "$CANARY/CLAUDE.md"
-        if bash "$LINTER" --root "$CANARY" >/dev/null 2>&1; then
-            echo "❌ pre-commit: линтер персоны НЕ краснеет на приманке — сторож сломан или подменён." >&2
-            echo "   Проверь .claude/skills/_lib/check-persona-sync.sh: его зелёный сейчас ничего не значит." >&2
+        LINTER="$SNAP/.claude/skills/_lib/check-persona-sync.sh"
+        if [ ! -f "$LINTER" ]; then
+            echo "❌ pre-commit: персона меняется, но линтера нет в индексе — коммит уедет без сторожа." >&2
             FAIL=1
-        fi
-        rm -rf "$CANARY"
+        else
+            echo "pre-commit: коммит трогает персону → проверяю согласованность слоёв (staged-снимок)…" >&2
 
-        SNAP="$(mktemp -d)"
-        if ! git checkout-index -a --prefix="$SNAP/" 2>/dev/null; then
-            echo "❌ pre-commit: не удалось выгрузить индекс во временный каталог — проверка не выполнена." >&2
-            FAIL=1
-        elif ! bash "$LINTER" --root "$SNAP" >&2; then
-            echo >&2
-            echo "❌ pre-commit: персона рассинхронизирована в том, что уходит в коммит (выжимка ↔ references)." >&2
-            echo "   Синхронизируй ядро CLAUDE.md и references/ и добавь их в индекс (git add)." >&2
-            FAIL=1
+            # --- приманка по ВСЕМ защитам: линтер обязан краснеть на битом входе ---
+            # Сторож не проверяется запуском самого себя. Но узкая приманка (только
+            # битая ссылка) доказывает только C1: подмена «краснею на пропавшем файле,
+            # молчу на остальном» её проходит. Поэтому фикстура ломает каждую защиту:
+            # C1 — ссылка в пустоту, C2/C3 — рефлекс без раскрытия, C4 — внеканонный
+            # TTL, C5 — шаг в ядре без раздела в cold-start.md. Проверяются и сводный
+            # отказ, и то, что каждая защита назвала СВОЮ находку.
+            CANARY="$(mktemp -d)"
+            mkdir -p "$CANARY/.claude/agents/references"
+            {
+                printf 'Ссылка в пустоту: `references/canary-missing.md`\n'
+                printf 'Рефлексы: см. `references/vpn-reflexes.md`\n'
+                printf -- '- **3.8.77** выдуманный рефлекс без раскрытия\n'
+                printf 'Слои: `_live/` 99 дн, `_reference/` 60 дн, `_meta/` 365 дн\n'
+                printf '## 7.1 Cold Start\nШаг 0 — конфиги. Шаг 77 — выдуманный.\n## 7.2 First-Run\n'
+            } > "$CANARY/CLAUDE.md"
+            printf '# vpn-reflexes\n' > "$CANARY/.claude/agents/references/vpn-reflexes.md"
+            printf '# cold-start\n\n## Шаг 0. Конфиги\n' > "$CANARY/.claude/agents/references/cold-start.md"
+
+            CANARY_OUT="$(bash "$LINTER" --root "$CANARY" 2>&1)"
+            CANARY_RC=$?
+            CANARY_MISSED=""
+            printf '%s' "$CANARY_OUT" | grep -q 'canary-missing' || CANARY_MISSED="$CANARY_MISSED C1"
+            printf '%s' "$CANARY_OUT" | grep -q '3\.8\.77'      || CANARY_MISSED="$CANARY_MISSED C2/C3"
+            printf '%s' "$CANARY_OUT" | grep -q 'C4:'           || CANARY_MISSED="$CANARY_MISSED C4"
+            printf '%s' "$CANARY_OUT" | grep -q 'Шаг 77'        || CANARY_MISSED="$CANARY_MISSED C5"
+            if [ "$CANARY_RC" -eq 0 ] || [ -n "$CANARY_MISSED" ]; then
+                echo "❌ pre-commit: линтер персоны не поймал приманку по защитам:${CANARY_MISSED:- (вернул 0)}" >&2
+                echo "   Сторож сломан или подменён — его зелёный на настоящем ядре ничего не значит." >&2
+                FAIL=1
+            fi
+            rm -rf "$CANARY"
+
+            if ! bash "$LINTER" --root "$SNAP" >&2; then
+                echo >&2
+                echo "❌ pre-commit: персона рассинхронизирована в том, что уходит в коммит (выжимка ↔ references)." >&2
+                echo "   Синхронизируй ядро CLAUDE.md и references/ и добавь их в индекс (git add)." >&2
+                FAIL=1
+            fi
         fi
-        rm -rf "$SNAP"
     fi
+    rm -rf "$SNAP"
+
+    # Честный предел: хук — не корень доверия для собственной подмены. Правку самих
+    # .githooks/* этот же хук и проверяет; окончательно её охраняет только внешний
+    # контур (ревью, CI из неизменяемого источника), которого здесь нет.
 
     # --- staged-проекция: ссылки ядра существуют В ИНДЕКСЕ, а не на диске ---
     # Линтер выше читает рабочее дерево. Новый reference, лежащий на диске, но не

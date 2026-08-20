@@ -164,7 +164,10 @@ echo
 if [ -f "$COLDSTART" ]; then
     echo "[C5] Набор «Шаг N» Cold Start совпадает в выжимке и cold-start.md?"
     # шаги, перечисленные в выжимке (в §7.1: «**Шаг 0**», «**Шаг 5.5**» и т.д.)
-    P_STEPS="$(grep -oE 'Шаг [0-9]+(\.[0-9]+)?' "$PERSONA" | grep -oE '[0-9]+(\.[0-9]+)?' | LC_ALL=C sort -u -t. -k1,1n -k2,2n)"
+    # ТОЛЬКО раздел §7.1: шаги, вынесенные за его границы, раньше сходили за наличие
+    # в Cold Start (мутант «убрать шаг из §7.1, упомянуть номер в §5», сверка 2026-08-20).
+    P_SECTION="$(sed -n "/7\.1 Cold Start/,/7\.2 First-Run/p" "$PERSONA")"
+    P_STEPS="$(printf "%s" "$P_SECTION" | grep -oE "Шаг [0-9]+(\.[0-9]+)?" | grep -oE "[0-9]+(\.[0-9]+)?" | LC_ALL=C sort -u -t. -k1,1n -k2,2n)"
     # шаги-заголовки в cold-start.md («## Шаг N.» / «## Шаг N.M.»)
     C_STEPS="$(grep -oE '^## Шаг [0-9]+(\.[0-9]+)?' "$COLDSTART" | grep -oE '[0-9]+(\.[0-9]+)?' | LC_ALL=C sort -u -t. -k1,1n -k2,2n)"
     C5=0
