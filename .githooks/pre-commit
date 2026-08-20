@@ -63,6 +63,25 @@ if [ "$PERSONA_TOUCHED" -eq 1 ]; then
             FAIL=1
         fi
     fi
+
+    # --- staged-проекция: ссылки ядра существуют В ИНДЕКСЕ, а не на диске ---
+    # Линтер выше читает рабочее дерево. Новый reference, лежащий на диске, но не
+    # добавленный в индекс (`git add -u` не берёт неотслеживаемые файлы), давал
+    # зелёный хук и битую ссылку в коммите. Найдено сверкой 2026-08-20.
+    if git cat-file -e :CLAUDE.md 2>/dev/null; then
+        MISSING_IN_INDEX=""
+        while IFS= read -r ref; do
+            [ -z "$ref" ] && continue
+            if ! git cat-file -e ":.claude/agents/$ref" 2>/dev/null; then
+                MISSING_IN_INDEX="$MISSING_IN_INDEX $ref"
+            fi
+        done < <(git cat-file blob :CLAUDE.md | grep -oE 'references/[^[:space:]`*(),;"]+\.md' | sort -u)
+        if [ -n "$MISSING_IN_INDEX" ]; then
+            echo "❌ pre-commit: ядро ссылается на$MISSING_IN_INDEX — этих файлов нет в индексе." >&2
+            echo "   Добавь их (git add) — иначе коммит уедет с битыми указателями." >&2
+            FAIL=1
+        fi
+    fi
 fi
 
 # ===========================================================================

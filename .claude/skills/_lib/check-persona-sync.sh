@@ -68,7 +68,7 @@ while IFS= read -r ref; do
     else
         note_fail "выжимка ссылается на $ref — файла нет"
     fi
-done < <(grep -oE 'references/[a-z0-9-]+\.md' "$PERSONA" | sort -u)
+done < <(grep -oE 'references/[^[:space:]`*(),;"]+\.md' "$PERSONA" | sort -u)
 [ "$FAILS" -eq 0 ] && note_ok "все ссылки на references/ ведут в существующие файлы"
 echo
 
@@ -116,15 +116,26 @@ if printf '%s\n' "$TTL_CTX" | grep -qE 'TTL[^0-9]*30|30[^0-9]*(дн|day)'; then
     fi
 fi
 # Если упомянут _live/ с TTL — число должно быть 14, _reference/ — 60, _meta/ — 365.
+# Проверка идёт по СПЛЮЩЕННОМУ тексту, а не построчно: в markdown абзац переносится,
+# и «_reference/» может стоять в конце строки, а «60 дн» — через строку. Построчный
+# взгляд давал ложное срабатывание, окно из двух строк — тоже (мутанты 2026-08-20).
+TTL_FLAT="$(tr '\n' ' ' < "$PERSONA" | tr -s ' ')"
+
 check_layer_ttl() {
     local layer="$1" want="$2"
-    local line
-    line="$(grep -nE "${layer}.{0,40}(дн|TTL)|(дн|TTL).{0,40}${layer}" "$PERSONA" | head -1)"
-    [ -z "$line" ] && return 0
-    if ! printf '%s\n' "$line" | grep -qE "\b${want}\b"; then
-        note_fail "C4: слой ${layer} в выжимке — ожидается TTL ${want}; строка: ${line}"
-        BAD_TTL=$((BAD_TTL+1))
-    fi
+    local frag
+    # ВСЕ упоминания слоя, а не первое: ядро называет слои дважды (§4.2 и §8.1),
+    # и проверка по head -1 пропускала расхождение во втором месте.
+    while IFS= read -r frag; do
+        [ -z "$frag" ] && continue
+        # фрагмент без «дн»/«TTL» — это упоминание слоя не в смысле срока годности
+        printf '%s' "$frag" | grep -qE '(дн|TTL)' || continue
+        if ! printf '%s' "$frag" | grep -qE "\b${want}\b"; then
+            note_fail "C4: слой ${layer} в выжимке — ожидается TTL ${want}; фрагмент: ${frag}"
+            BAD_TTL=$((BAD_TTL+1))
+        fi
+    done < <(printf '%s' "$TTL_FLAT" | grep -oE "${layer}.{0,40}")
+    return 0
 }
 check_layer_ttl "_live/" 14
 check_layer_ttl "_reference/" 60
