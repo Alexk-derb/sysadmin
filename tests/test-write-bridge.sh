@@ -49,7 +49,7 @@ bridge_file() { printf '%s' "$HOME/.claude/agents/sysadmin.md"; }
 
 # Корень мозга — каталог с CLAUDE.md: указатель ведёт именно на ядро, и helper обязан
 # отвергать каталоги без него (находка сверки 2026-08-20).
-BRAIN="$TMPROOT/brain"; mkdir -p "$BRAIN"; : > "$BRAIN/CLAUDE.md"
+BRAIN="$TMPROOT/brain"; mkdir -p "$BRAIN/.claude/skills"; : > "$BRAIN/CLAUDE.md"; : > "$BRAIN/.sysadmin-root"
 
 echo "== 1. Успешная запись"
 use_home ok
@@ -63,7 +63,13 @@ grep -qE '^name: sysadmin$' "$f"; check $? "frontmatter содержит name: s
 # Claude Code, а его пропажа не ломает ни одного другого теста (диверсант сверки 2026-08-20).
 grep -qE '^description: .+' "$f"; check $? "frontmatter содержит непустой description"
 grep -qE '^model: ' "$f"; check $? "frontmatter содержит model"
-grep -qF "Скиллы репозитория указатель не переносит" "$f"; check $? "граница про скиллы описана"
+grep -qF "Скиллы сам указатель не переносит" "$f"; check $? "граница про скиллы описана"
+grep -qF -- "--add-dir" "$f"; check $? "назван рабочий способ получить скиллы"
+# Структура frontmatter, а не только его строки: диверсант сверки 2026-08-20 — подменить
+# первый разделитель `---`. Все построчные grep остаются зелёными, а определение агента
+# перестаёт быть валидным. Поэтому проверяются оба разделителя и их позиции.
+[ "$(head -1 "$f")" = "---" ]; check $? "первая строка — разделитель frontmatter"
+[ "$(sed -n '2,20p' "$f" | grep -cx -- '---')" -eq 1 ]; check $? "закрывающий разделитель ровно один"
 printf '%s' "$out" | grep -qF "$SUCCESS_MARK"; check $? "напечатана строка успеха"
 
 echo "== 2. Отказ записи объявляется отказом (не ложный успех)"
@@ -138,6 +144,20 @@ out="$(write_bridge "$NOBRAIN" 2>&1)"; rc=$?
 if printf '%s' "$out" | grep -qF "$SUCCESS_MARK"; then bad "каталог без CLAUDE.md: напечатан успех"; else ok "каталог без CLAUDE.md: без строки успеха"; fi
 [ ! -e "$(bridge_file)" ]; check $? "каталог без CLAUDE.md: файл не создан"
 
+echo "== 3ж. Чужой каталог с CLAUDE.md корнем мозга не считается"
+# CLAUDE.md есть у множества репозиториев. Признак корня должен совпадать с тем, по которому
+# указатель ЧИТАЕТСЯ (find-config.sh): маркер .sysadmin-root либо CLAUDE.md + .claude/skills.
+use_home foreign
+FOREIGN="$TMPROOT/foreign-repo"; mkdir -p "$FOREIGN"; : > "$FOREIGN/CLAUDE.md"
+out="$(write_bridge "$FOREIGN" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ]; check $? "чужой репозиторий с CLAUDE.md отвергнут"
+[ ! -e "$(bridge_file)" ]; check $? "чужой репозиторий: файл не создан"
+
+echo "== 3з. Корень по маркеру .sysadmin-root принимается"
+use_home marker
+MARKED="$TMPROOT/marked-root"; mkdir -p "$MARKED"; : > "$MARKED/CLAUDE.md"; : > "$MARKED/.sysadmin-root"
+write_bridge "$MARKED" >/dev/null 2>&1; check $? "каталог с маркером принят"
+
 echo "== 3е. Родной виндовый путь принимается"
 # На Windows вызывающий передаёт C:/… — отказ ломал бы установку. Проверяем только там,
 # где такой путь вообще существует; на прочих системах кейс громко пропускается.
@@ -199,7 +219,7 @@ printf '%s' "$out" | grep -qF "не задан \$HOME"; check $? "причина
 
 echo "== 5. Повторный вызов: бэкап прежнего и свежий путь"
 use_home again
-OLD="$TMPROOT/brain-old"; mkdir -p "$OLD"; : > "$OLD/CLAUDE.md"
+OLD="$TMPROOT/brain-old"; mkdir -p "$OLD"; : > "$OLD/CLAUDE.md"; : > "$OLD/.sysadmin-root"
 write_bridge "$OLD"   >/dev/null 2>&1
 write_bridge "$BRAIN" >/dev/null 2>&1; rc=$?
 f="$(bridge_file)"
@@ -215,7 +235,7 @@ if grep -qF "$BRAIN//" "$(bridge_file)"; then bad "в пути появился 
 
 echo "== 7. Предупреждение про облачную папку — только когда уместно"
 use_home cloud
-CLOUD="$TMPROOT/Dropbox/sysadmin"; mkdir -p "$CLOUD"; : > "$CLOUD/CLAUDE.md"
+CLOUD="$TMPROOT/Dropbox/sysadmin"; mkdir -p "$CLOUD"; : > "$CLOUD/CLAUDE.md"; : > "$CLOUD/.sysadmin-root"
 write_bridge "$CLOUD" >/dev/null 2>&1
 grep -qF "облачной синхронизации" "$(bridge_file)"; check $? "для облачной папки предупреждение есть"
 

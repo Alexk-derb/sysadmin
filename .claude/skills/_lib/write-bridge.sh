@@ -53,10 +53,13 @@ write_bridge() {
         return 1
     fi
     sysadmin_root="${sysadmin_root%/}"
-    # Указатель ведёт на ядро персоны. Каталог без CLAUDE.md мозгом не является, и bridge
-    # на него — указатель в пустоту, который обнаружится только при вызове @sysadmin.
-    if [ ! -f "$sysadmin_root/CLAUDE.md" ]; then
-        echo "write_bridge: в каталоге нет CLAUDE.md — это не корень мозга: $sysadmin_root" >&2
+    # Указатель ведёт на корень мозга, и признак корня здесь ТОТ ЖЕ, что у читателя указателя
+    # (`_is_sysadmin_root` в find-config.sh): маркер `.sysadmin-root` либо пара «CLAUDE.md +
+    # .claude/skills». Одного CLAUDE.md мало — он есть у множества чужих репозиториев, и
+    # указатель на такой каталог обнаружился бы только при вызове @sysadmin (сверка 2026-08-20).
+    if [ ! -f "$sysadmin_root/.sysadmin-root" ] \
+       && ! { [ -f "$sysadmin_root/CLAUDE.md" ] && [ -d "$sysadmin_root/.claude/skills" ]; }; then
+        echo "write_bridge: это не корень мозга (нет .sysadmin-root и нет пары CLAUDE.md + .claude/skills): $sysadmin_root" >&2
         return 1
     fi
 
@@ -111,10 +114,12 @@ sysadmin/ по пути:
 детальные протоколы — в \`$sysadmin_root/.claude/agents/references/\`. Инструменты не
 ограничиваю (наследую от родителя, включая Skill для запуска скиллов).
 
-**Скиллы репозитория указатель не переносит.** Он даёт персону и путь к ядру; сами скиллы
-(\`/health-check\`, \`/deploy-service\`, …) остаются проектными и вызываются, когда открыта
-папка \`$sysadmin_root/\`. Из чужой папки доступны персона и чтение файлов, но не вызов
-скилла как команды.$cloud_note
+**Скиллы сам указатель не переносит.** Он даёт персону и путь к ядру. Чтобы из чужой папки
+работали и команды (\`/health-check\`, \`/deploy-service\`, …), сессию нужно запускать с
+\`--add-dir $sysadmin_root\` (или выполнить \`/add-dir\` в ней): по документации Claude Code
+добавленный каталог отдаёт свои \`.claude/skills/\`, \`.claude/commands/\` и \`.claude/agents/\`.
+Настройка \`permissions.additionalDirectories\` этого НЕ делает — она даёт только доступ к
+файлам.$cloud_note
 EOF
     then
         rm -f "$tmp"
