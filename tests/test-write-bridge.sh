@@ -58,7 +58,7 @@ echo "== 1. Успешная запись"
 use_home ok
 out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
 f="$(bridge_file)"
-[ "$rc" -eq 0 ]; check $? "код возврата 0"
+[ "$rc" -eq 0 ]; check $? "успешная запись: код возврата 0"
 [ -s "$f" ]; check $? "файл создан и непустой"
 grep -qF "$BRAIN/CLAUDE.md" "$f"; check $? "внутри путь к ядру"
 grep -qE '^name: sysadmin$' "$f"; check $? "frontmatter содержит name: sysadmin"
@@ -216,6 +216,36 @@ unset -f cp
 [ "$rc" -ne 0 ]; check $? "провал бэкапа: код возврата не ноль"
 printf '%s' "$out" | grep -qF "не удалось сохранить копию"; check $? "провал бэкапа: причина названа верно"
 [ "$(command cat "$(bridge_file)" | cksum)" = "$before_hash" ]; check $? "провал бэкапа: прежний указатель не заменён"
+
+echo "== 1г. Набор ключей frontmatter — ровно ожидаемый"
+# Диверсант круга 5: добавить `tools: Read, Grep`. Формально frontmatter валиден, все
+# прежние проверки зелёные, а @sysadmin молча лишается Bash и SSH. Поэтому проверяется не
+# «нужные ключи есть», а «лишних нет».
+use_home keys
+write_bridge "$BRAIN" >/dev/null 2>&1
+keys="$(sed -n '2,/^---$/p' "$(bridge_file)" | grep -oE '^[a-zA-Z_-]+:' | tr -d ':' | sort | tr '\n' ' ')"
+[ "$keys" = "description model name " ]; check $? "ключи frontmatter ровно name/description/model (получено: $keys)"
+if grep -qE '^tools:' "$(bridge_file)"; then bad "во frontmatter появился tools — агент лишится инструментов"; else ok "ключа tools нет (инструменты наследуются)"; fi
+
+echo "== 3м. На месте указателя каталог"
+# `mv` положил бы временный файл ВНУТРЬ каталога и вернул ноль: указателя как файла нет,
+# а отказа никто не заметил (находка круга 5).
+use_home dirtarget
+mkdir -p "$HOME/.claude/agents/sysadmin.md"
+out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ]; check $? "каталог на месте указателя: код возврата не ноль"
+printf '%s' "$out" | grep -qF "каталог, а должен быть файлом"; check $? "каталог на месте указателя: причина названа верно"
+if ls "$HOME/.claude/agents/sysadmin.md/".sysadmin-bridge.* >/dev/null 2>&1; then bad "временный файл уехал внутрь каталога"; else ok "внутрь каталога ничего не записано"; fi
+
+echo "== 3н. Протухший замок снимается, свежий — уважается"
+use_home stalelock
+mkdir -p "$HOME/.claude/agents/.sysadmin-bridge.lock"
+# Состариваем замок на час: свежий обязан блокировать (кейс 3л), протухший — сниматься.
+touch -d '1 hour ago' "$HOME/.claude/agents/.sysadmin-bridge.lock" 2>/dev/null \
+    || touch -t "$(date -d '1 hour ago' +%Y%m%d%H%M 2>/dev/null || echo 202001010000)" "$HOME/.claude/agents/.sysadmin-bridge.lock" 2>/dev/null
+out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ]; check $? "протухший замок снят, запись прошла"
+printf '%s' "$out" | grep -qF "снимаю протухший замок"; check $? "о снятии замка сказано вслух"
 
 echo "== 3к. Путь с обратной кавычкой отвергается"
 # Такой путь ломает разбор указателя, а запись при этом «удаётся» — указатель молча

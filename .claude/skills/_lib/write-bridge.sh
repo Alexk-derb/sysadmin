@@ -85,6 +85,13 @@ write_bridge() {
 
     local bridge_dir="$HOME/.claude/agents"
     local bridge="$bridge_dir/sysadmin.md"
+    # Если на месте указателя оказался КАТАЛОГ (или ссылка на каталог), `mv` положит
+    # временный файл ВНУТРЬ него, вернёт ноль, и указателя как файла не появится
+    # (находка сверки 2026-08-20, круг 5). Отказываюсь до всякой записи.
+    if [ -d "$bridge" ]; then
+        echo "write_bridge: $bridge — каталог, а должен быть файлом. Убери его и повтори." >&2
+        return 1
+    fi
     if ! mkdir -p "$bridge_dir" 2>/dev/null; then
         echo "WARN: не создать $bridge_dir — bridge пропускаю, @sysadmin из чужих папок будет недоступен." >&2
         return 1
@@ -148,11 +155,15 @@ EOF
     if [ ! -s "$tmp" ] \
        || ! grep -qF "$sysadmin_root/CLAUDE.md" "$tmp" \
        || ! grep -qE '^name: sysadmin$' "$tmp" \
-       || ! grep -qE '^description: .+' "$tmp"; then
+       || ! grep -qE '^description: .+' "$tmp" \
+       || grep -qE '^tools:' "$tmp"; then
         rm -f "$tmp"
-        echo "write_bridge: временный файл неполон (путь к ядру или frontmatter) — bridge не заменён." >&2
+        echo "write_bridge: временный файл неполон или содержит лишний ключ frontmatter — bridge не заменён." >&2
         return 1
     fi
+    # `tools:` во frontmatter ОТСУТСТВУЕТ намеренно: агент наследует инструменты родителя,
+    # включая Bash, SSH и Skill. Появись там `tools: Read, Grep` — @sysadmin молча лишится
+    # возможности работать, а все прежние проверки остались бы зелёными (диверсант круга 5).
 
     # Бэкап прежнего указателя (перенесено из INSTALL.md Шаг 7). Молчаливый провал бэкапа
     # недопустим: дальше идёт замена, и без копии прежний указатель исчезнет безвозвратно.
@@ -161,6 +172,13 @@ EOF
     # как первый отчитался об успехе (сверка 2026-08-20, круг 4). mkdir атомарен на всех
     # файловых системах, где мы работаем.
     local lock="$bridge_dir/.sysadmin-bridge.lock" locked=0 _try
+    # Замок, оставшийся после аварийно завершённого процесса, иначе блокирует установку
+    # НАВСЕГДА (находка сверки 2026-08-20, круг 5). Поэтому протухший — старше двух минут —
+    # снимается, о чём говорится вслух: тихое снятие замка ничем не лучше его отсутствия.
+    if [ -d "$lock" ] && [ -z "$(find "$lock" -maxdepth 0 -newermt '-120 seconds' 2>/dev/null)" ]; then
+        echo "WARN: снимаю протухший замок $lock (старше 2 минут — процесс, вероятно, умер)." >&2
+        rmdir "$lock" 2>/dev/null || true
+    fi
     for _try in 1 2 3 4 5 6 7 8 9 10; do
         if mkdir "$lock" 2>/dev/null; then locked=1; break; fi
         sleep 1

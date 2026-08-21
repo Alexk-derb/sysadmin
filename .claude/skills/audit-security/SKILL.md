@@ -83,7 +83,9 @@ SECRETS_MANAGER="${SECRETS_MANAGER:-$(get_agent_field '.secrets.manager' '.secre
 Если по какой-то причине `$SYSADMIN_ROOT` не задан — возьми его **единственным источником**,
 а не собственным разбором указателя:
 ```bash
-source "$LIB/find-config.sh"   # $LIB = <корень sysadmin>/.claude/skills/_lib
+# ${CLAUDE_SKILL_DIR} — каталог с этим SKILL.md; от него и пляшем. Полагаться на $LIB
+# нельзя: в этом блоке он не задан (найдено сверкой 2026-08-20, круг 5).
+source "${CLAUDE_SKILL_DIR}/../_lib/find-config.sh"
 locate_sysadmin_root           # заполняет $SYSADMIN_ROOT
 ```
 
