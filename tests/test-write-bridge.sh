@@ -65,7 +65,7 @@ grep -qE '^name: sysadmin$' "$f"; check $? "frontmatter содержит name: s
 # Без description файл не является определением агента: поле обязательно по контракту
 # Claude Code, а его пропажа не ломает ни одного другого теста (диверсант сверки 2026-08-20).
 grep -qE '^description: .+' "$f"; check $? "frontmatter содержит непустой description"
-grep -qE '^model: ' "$f"; check $? "frontmatter содержит model"
+grep -qx 'model: inherit' "$f"; check $? "model ровно inherit (а не сломанный YAML вроде [inherit)"
 grep -qF "Скиллы сам указатель не переносит" "$f"; check $? "граница про скиллы описана"
 grep -qF -- "--add-dir" "$f"; check $? "назван рабочий способ получить скиллы"
 # Структура frontmatter, а не только его строки: диверсант сверки 2026-08-20 — подменить
@@ -245,7 +245,34 @@ touch -d '1 hour ago' "$HOME/.claude/agents/.sysadmin-bridge.lock" 2>/dev/null \
     || touch -t "$(date -d '1 hour ago' +%Y%m%d%H%M 2>/dev/null || echo 202001010000)" "$HOME/.claude/agents/.sysadmin-bridge.lock" 2>/dev/null
 out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ]; check $? "протухший замок снят, запись прошла"
-printf '%s' "$out" | grep -qF "снимаю протухший замок"; check $? "о снятии замка сказано вслух"
+printf '%s' "$out" | grep -qF "снят протухший замок"; check $? "о снятии замка сказано вслух"
+
+echo "== 3о. Живой владелец замка неприкосновенен, сколько бы ни держал"
+# Возраст сам по себе смерти владельца не доказывает (находка круга 6). Замок, состаренный
+# на час, но принадлежащий ЖИВОМУ процессу, снимать нельзя.
+use_home livelock
+mkdir -p "$HOME/.claude/agents/.sysadmin-bridge.lock"
+printf '%s' "$$" > "$HOME/.claude/agents/.sysadmin-bridge.lock/pid"
+touch -d '1 hour ago' "$HOME/.claude/agents/.sysadmin-bridge.lock" 2>/dev/null || true
+out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
+rm -f "$HOME/.claude/agents/.sysadmin-bridge.lock/pid" 2>/dev/null
+rmdir "$HOME/.claude/agents/.sysadmin-bridge.lock" 2>/dev/null
+[ "$rc" -ne 0 ]; check $? "живой владелец: замок не отобран, запись отклонена"
+if printf '%s' "$out" | grep -qF "снят протухший замок"; then bad "живой владелец: замок отобрали"; else ok "живой владелец: замок не тронут"; fi
+
+echo "== 3п. Не смог измерить возраст замка — не трогает его"
+# Круг 6: пустой вывод `find` при ОТКАЗЕ выглядел так же, как пустой вывод для старого
+# замка, и отказ инструмента трактовался как «протух». Любое сомнение решается в пользу
+# «замок живой».
+use_home findbroken
+mkdir -p "$HOME/.claude/agents/.sysadmin-bridge.lock"
+touch -d '1 hour ago' "$HOME/.claude/agents/.sysadmin-bridge.lock" 2>/dev/null || true
+find() { return 1; }
+out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
+unset -f find
+rmdir "$HOME/.claude/agents/.sysadmin-bridge.lock" 2>/dev/null
+[ "$rc" -ne 0 ]; check $? "отказ find: замок не отобран"
+if printf '%s' "$out" | grep -qF "снят протухший замок"; then bad "отказ find: замок сочли протухшим"; else ok "отказ find: замок сочтён живым"; fi
 
 echo "== 3к. Путь с обратной кавычкой отвергается"
 # Такой путь ломает разбор указателя, а запись при этом «удаётся» — указатель молча

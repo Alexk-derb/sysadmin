@@ -156,6 +156,7 @@ EOF
        || ! grep -qF "$sysadmin_root/CLAUDE.md" "$tmp" \
        || ! grep -qE '^name: sysadmin$' "$tmp" \
        || ! grep -qE '^description: .+' "$tmp" \
+       || ! grep -qx 'model: inherit' "$tmp" \
        || grep -qE '^tools:' "$tmp"; then
         rm -f "$tmp"
         echo "write_bridge: временный файл неполон или содержит лишний ключ frontmatter — bridge не заменён." >&2
@@ -172,15 +173,36 @@ EOF
     # как первый отчитался об успехе (сверка 2026-08-20, круг 4). mkdir атомарен на всех
     # файловых системах, где мы работаем.
     local lock="$bridge_dir/.sysadmin-bridge.lock" locked=0 _try
+    local lock_id="$$-$(date +%s)"
+
     # Замок, оставшийся после аварийно завершённого процесса, иначе блокирует установку
-    # НАВСЕГДА (находка сверки 2026-08-20, круг 5). Поэтому протухший — старше двух минут —
-    # снимается, о чём говорится вслух: тихое снятие замка ничем не лучше его отсутствия.
-    if [ -d "$lock" ] && [ -z "$(find "$lock" -maxdepth 0 -newermt '-120 seconds' 2>/dev/null)" ]; then
-        echo "WARN: снимаю протухший замок $lock (старше 2 минут — процесс, вероятно, умер)." >&2
-        rmdir "$lock" 2>/dev/null || true
-    fi
+    # НАВСЕГДА (круг 5). Но снимать его наивным `rmdir` нельзя: между проверкой возраста и
+    # снятием другой процесс успевает взять НОВЫЙ замок, и `rmdir` убьёт уже его — оба
+    # процесса окажутся «владельцами» (круг 6). Поэтому захват протухшего замка идёт через
+    # атомарное переименование: выигрывает ровно один, остальным `mv` не удаётся.
+    _wb_take_stale_lock() {
+        [ -d "$lock" ] || return 1
+        # Возраст: ошибка `find` НЕ означает протухания — при любом сомнении считаем замок
+        # живым и не трогаем (круг 6: пустой вывод при отказе трактовался как «протух»).
+        find "$lock" -maxdepth 0 >/dev/null 2>&1 || return 1
+        [ -z "$(find "$lock" -maxdepth 0 -newermt '-600 seconds' 2>/dev/null)" ] || return 1
+        # Возраст сам по себе смерти владельца не доказывает. Если владелец жив — не трогаем,
+        # сколько бы он ни держал замок.
+        local owner; owner="$(cat "$lock/pid" 2>/dev/null)"
+        if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then return 1; fi
+        mv "$lock" "$lock.stale.$lock_id" 2>/dev/null || return 1
+        rm -f "$lock.stale.$lock_id/pid" 2>/dev/null
+        rmdir "$lock.stale.$lock_id" 2>/dev/null
+        echo "WARN: снят протухший замок $lock (старше 10 минут, владелец не отвечает)." >&2
+        return 0
+    }
+
     for _try in 1 2 3 4 5 6 7 8 9 10; do
-        if mkdir "$lock" 2>/dev/null; then locked=1; break; fi
+        if mkdir "$lock" 2>/dev/null; then
+            printf '%s' "$$" > "$lock/pid" 2>/dev/null
+            locked=1; break
+        fi
+        _wb_take_stale_lock && continue
         sleep 1
     done
     if [ "$locked" -ne 1 ]; then
@@ -188,7 +210,7 @@ EOF
         echo "write_bridge: указатель уже пишет другой процесс (замок $lock) — не вмешиваюсь." >&2
         return 1
     fi
-    _wb_unlock() { rmdir "$lock" 2>/dev/null || true; }
+    _wb_unlock() { rm -f "$lock/pid" 2>/dev/null; rmdir "$lock" 2>/dev/null || true; }
 
     local backup=""
     if [ -f "$bridge" ]; then
