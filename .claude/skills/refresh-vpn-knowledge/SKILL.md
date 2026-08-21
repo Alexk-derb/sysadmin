@@ -90,9 +90,11 @@ allowed-tools: Bash, Read, Edit, Write, WebSearch, WebFetch
 Запускаю helper, чтобы понять — какие файлы просрочены.
 
 ```bash
-SYSADMIN_ROOT=$(grep -oE '`/[^`]+sysadmin/?`' ~/.claude/agents/sysadmin.md 2>/dev/null \
-    | head -1 | sed 's|`||g; s|/$||')
-[ -z "$SYSADMIN_ROOT" ] && SYSADMIN_ROOT="$(pwd)"
+# Корень берётся единственным источником — своя копия регулярки расходилась с читателем
+# и ломалась на виндовых путях и на каталоге с именем не «sysadmin» (сверка 2026-08-20).
+source "${CLAUDE_SKILL_DIR:-.}/../_lib/find-config.sh" 2>/dev/null \
+    && locate_sysadmin_root
+[ -z "${SYSADMIN_ROOT:-}" ] && SYSADMIN_ROOT="$(pwd)"
 
 # Список просроченных файлов в JSON-формате
 STALE=$(bash "$SYSADMIN_ROOT/.claude/skills/_lib/check-knowledge-freshness.sh" \

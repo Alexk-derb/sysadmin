@@ -48,6 +48,15 @@ write_bridge() {
             return 1
             ;;
     esac
+    # Путь попадает в файл внутри обратных кавычек и оттуда же читается резолвером.
+    # Обратная кавычка или перевод строки в пути делают указатель неразбираемым, причём
+    # запись при этом «удаётся» (сверка 2026-08-20, круг 4).
+    case "$sysadmin_root" in
+        *'`'*|*$'\n'*)
+            echo "write_bridge: в пути есть обратная кавычка или перевод строки — указатель стал бы неразбираемым: $sysadmin_root" >&2
+            return 1
+            ;;
+    esac
     if [ ! -d "$sysadmin_root" ]; then
         echo "write_bridge: каталог не существует: $sysadmin_root" >&2
         return 1
@@ -147,6 +156,22 @@ EOF
 
     # Бэкап прежнего указателя (перенесено из INSTALL.md Шаг 7). Молчаливый провал бэкапа
     # недопустим: дальше идёт замена, и без копии прежний указатель исчезнет безвозвратно.
+    # Критическая секция «бэкап → подмена → проверка» сериализуется: два одновременных
+    # запуска иначе чередуются, и второй восстанавливает старый указатель уже после того,
+    # как первый отчитался об успехе (сверка 2026-08-20, круг 4). mkdir атомарен на всех
+    # файловых системах, где мы работаем.
+    local lock="$bridge_dir/.sysadmin-bridge.lock" locked=0 _try
+    for _try in 1 2 3 4 5 6 7 8 9 10; do
+        if mkdir "$lock" 2>/dev/null; then locked=1; break; fi
+        sleep 1
+    done
+    if [ "$locked" -ne 1 ]; then
+        rm -f "$tmp"
+        echo "write_bridge: указатель уже пишет другой процесс (замок $lock) — не вмешиваюсь." >&2
+        return 1
+    fi
+    _wb_unlock() { rmdir "$lock" 2>/dev/null || true; }
+
     local backup=""
     if [ -f "$bridge" ]; then
         # Цель — символическая ссылка: mv заменит её обычным файлом, и то, на что она вела,
@@ -161,14 +186,14 @@ EOF
         if ! cp -p "$bridge" "$backup" 2>/dev/null; then
             rm -f "$tmp"
             echo "write_bridge: не удалось сохранить копию прежнего указателя — замену не делаю." >&2
-            return 1
+            _wb_unlock; return 1
         fi
     fi
 
     if ! mv -f "$tmp" "$bridge" 2>/dev/null; then
         rm -f "$tmp"
         echo "write_bridge: не удалось заменить $bridge" >&2
-        return 1
+        _wb_unlock; return 1
     fi
 
     # Финальное постусловие — уже на цели. Не прошло — возвращаю прежний указатель из копии:
@@ -182,9 +207,10 @@ EOF
                 echo "write_bridge: восстановить прежний указатель НЕ удалось, копия лежит в $backup" >&2
             fi
         fi
-        return 1
+        _wb_unlock; return 1
     fi
 
+    _wb_unlock
     echo "✅ bridge-указатель записан: $bridge (путь к мозгу: $sysadmin_root)"
     return 0
 }

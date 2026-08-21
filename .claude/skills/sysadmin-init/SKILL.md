@@ -362,10 +362,11 @@ ADR-0015). Создание — единый helper `_lib/write-bridge.sh` (од
 
 Блок самодостаточен: `$LIB` и `$SYSADMIN_ROOT` задаются здесь же. Каждый вызов Bash —
 отдельный процесс, и переменные из предыдущих шагов до этого блока не доживают (найдено
-сверкой 2026-08-20).
+сверкой 2026-08-20). Корень вычисляется от `${CLAUDE_SKILL_DIR}` — это документированный
+путь к каталогу с `SKILL.md`; `$0` здесь не годится, в скилле это аргумент, а не путь.
 
 ```bash
-SYSADMIN_ROOT="${SYSADMIN_ROOT:-$(cd "$(dirname "$0")/../../.." 2>/dev/null && pwd)}"
+SYSADMIN_ROOT="${SYSADMIN_ROOT:-$(cd "${CLAUDE_SKILL_DIR}/../../.." 2>/dev/null && pwd)}"
 LIB="${LIB:-$SYSADMIN_ROOT/.claude/skills/_lib}"
 source "$LIB/write-bridge.sh"
 if ! write_bridge "$SYSADMIN_ROOT"; then

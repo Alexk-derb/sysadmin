@@ -166,7 +166,10 @@ locate_sysadmin_root() {
                 [A-Za-z]:*) from_bridge="$(cygpath -u "$from_bridge" 2>/dev/null || echo "$from_bridge")" ;;
             esac
         fi
-        if [ -n "$from_bridge" ] && [ -d "$from_bridge" ]; then
+        # Существования каталога мало: указатель мог остаться от прежней установки, а по
+        # его пути теперь лежит что угодно. Требуем то же, что требует писатель, — ядро
+        # на месте (сверка 2026-08-20, круг 4).
+        if [ -n "$from_bridge" ] && [ -d "$from_bridge" ] && [ -f "$from_bridge/CLAUDE.md" ]; then
             SYSADMIN_ROOT="$from_bridge"
             return 0
         fi

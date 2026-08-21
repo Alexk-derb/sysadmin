@@ -25,6 +25,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Проверяемый файл можно подменить — это нужно мутационной проверке (набор обязан краснеть
 # на намеренно испорченных версиях helper). По умолчанию проверяется штатный.
 WRITE_BRIDGE_LIB="${WRITE_BRIDGE_LIB:-$ROOT/.claude/skills/_lib/write-bridge.sh}"
+# Читатель указателя подменяется отдельно: мутационная проверка обязана портить и его —
+# половина контракта живёт там (диверсант сверки 2026-08-20, круг 4).
+FIND_CONFIG_LIB="${FIND_CONFIG_LIB:-$ROOT/.claude/skills/_lib/find-config.sh}"
 # shellcheck source=/dev/null
 source "$WRITE_BRIDGE_LIB"
 
@@ -155,10 +158,42 @@ ODDNAME="$TMPROOT/ops-brain"; mkdir -p "$ODDNAME/.claude/skills"; : > "$ODDNAME/
 write_bridge "$ODDNAME" >/dev/null 2>&1; check $? "указатель записан для каталога с именем не sysadmin"
 (
     # shellcheck source=/dev/null
-    source "$ROOT/.claude/skills/_lib/find-config.sh"
+    source "$FIND_CONFIG_LIB"
     locate_sysadmin_root >/dev/null 2>&1
     [ "$(cd "$SYSADMIN_ROOT" 2>/dev/null && pwd -P)" = "$(cd "$ODDNAME" && pwd -P)" ]
 ); check $? "настоящий locate_sysadmin_root вернул тот же каталог"
+
+# Та же проверка для РОДНОЙ виндовой формы пути: диверсант круга 4 — снять нормализацию
+# cygpath в читателе. Кейс «3е» проверяет только писателя, и без этого прохода мутант
+# оставался бы незамеченным.
+if command -v cygpath >/dev/null 2>&1; then
+    # Форма с ОБРАТНЫМИ слэшами (`cygpath -w`), а не с прямыми: прямые bash понимает и без
+    # нормализации, поэтому проверка на них зелена даже со снятым cygpath — мутант выживал.
+    use_home roundtripwin
+    write_bridge "$(cygpath -w "$ODDNAME")" >/dev/null 2>&1
+    (
+        # shellcheck source=/dev/null
+        source "$FIND_CONFIG_LIB"
+        locate_sysadmin_root >/dev/null 2>&1
+        [ "$(cd "$SYSADMIN_ROOT" 2>/dev/null && pwd -P)" = "$(cd "$ODDNAME" && pwd -P)" ]
+    ); check $? "читатель разобрал указатель с виндовым путём"
+else
+    skip "round-trip с виндовым путём" "нет cygpath — система не Windows"
+fi
+
+echo "== 1в. Читатель отвергает указатель на каталог без ядра"
+# Указатель может пережить сам мозг: каталог остался, CLAUDE.md удалён. Тогда резолвер
+# обязан НЕ принимать этот путь, иначе агент пойдёт грузить персону из пустоты.
+use_home staleroot
+STALE="$TMPROOT/stale-root"; mkdir -p "$STALE/.claude/skills"; : > "$STALE/CLAUDE.md"; : > "$STALE/.sysadmin-root"
+write_bridge "$STALE" >/dev/null 2>&1
+rm -f "$STALE/CLAUDE.md"
+(
+    # shellcheck source=/dev/null
+    source "$FIND_CONFIG_LIB"
+    locate_sysadmin_root >/dev/null 2>&1
+    [ "$(cd "${SYSADMIN_ROOT:-/nowhere}" 2>/dev/null && pwd -P)" != "$(cd "$STALE" && pwd -P)" ]
+); check $? "читатель не принял каталог без CLAUDE.md"
 
 echo "== 3ж. Чужой каталог с CLAUDE.md корнем мозга не считается"
 # CLAUDE.md есть у множества репозиториев. Признак корня должен совпадать с тем, по которому
@@ -181,6 +216,31 @@ unset -f cp
 [ "$rc" -ne 0 ]; check $? "провал бэкапа: код возврата не ноль"
 printf '%s' "$out" | grep -qF "не удалось сохранить копию"; check $? "провал бэкапа: причина названа верно"
 [ "$(command cat "$(bridge_file)" | cksum)" = "$before_hash" ]; check $? "провал бэкапа: прежний указатель не заменён"
+
+echo "== 3к. Путь с обратной кавычкой отвергается"
+# Такой путь ломает разбор указателя, а запись при этом «удаётся» — указатель молча
+# становится нечитаемым (сверка 2026-08-20, круг 4).
+use_home backtick
+TICKDIR="$TMPROOT/bad\`name"; mkdir -p "$TICKDIR/.claude/skills" 2>/dev/null; : > "$TICKDIR/CLAUDE.md" 2>/dev/null
+if [ -d "$TICKDIR" ]; then
+    out="$(write_bridge "$TICKDIR" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ]; check $? "путь с обратной кавычкой: код возврата не ноль"
+    printf '%s' "$out" | grep -qF "обратная кавычка"; check $? "путь с обратной кавычкой: причина названа верно"
+    [ ! -e "$(bridge_file)" ]; check $? "путь с обратной кавычкой: файл не создан"
+else
+    skip "путь с обратной кавычкой" "файловая система не приняла такое имя"
+fi
+
+echo "== 3л. Одновременная запись не допускается"
+# Замок держит критическую секцию «бэкап → подмена → проверка»: без него второй процесс
+# восстанавливает старый указатель уже после того, как первый отчитался об успехе.
+use_home lockbusy
+mkdir -p "$HOME/.claude/agents/.sysadmin-bridge.lock"
+out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
+rmdir "$HOME/.claude/agents/.sysadmin-bridge.lock" 2>/dev/null
+[ "$rc" -ne 0 ]; check $? "занятый замок: код возврата не ноль"
+printf '%s' "$out" | grep -qF "уже пишет другой процесс"; check $? "занятый замок: причина названа верно"
+if ls "$HOME/.claude/agents/".sysadmin-bridge.?????? >/dev/null 2>&1; then bad "занятый замок: временный файл остался"; else ok "занятый замок: временный файл убран"; fi
 
 echo "== 3и. Маркер без CLAUDE.md корнем не считается"
 # Указатель ведёт на CLAUDE.md. Каталог с маркером, но без ядра — успешная запись в пустоту.
