@@ -152,8 +152,12 @@ EOF
     # Постусловие на временном файле — ДО того, как он станет боевым. Проверяются обе
     # обязательные части: путь к ядру и frontmatter (без `name:`/`description:` файл не
     # является определением агента — находка сверки 2026-08-20).
+    # Путь проверяется ДВАЖДЫ: строкой прозы и КАНОНИЧЕСКОЙ строкой `**`путь/`**` — резолвер
+    # (`locate_sysadmin_root`) разбирает именно её, и порча обратных кавычек постусловием не
+    # ловилась: набор такую правку видел, боевая запись — нет (мой замер перед кругом 8).
     if [ ! -s "$tmp" ] \
        || ! grep -qF "$sysadmin_root/CLAUDE.md" "$tmp" \
+       || ! grep -qxF "**\`$sysadmin_root/\`**" "$tmp" \
        || ! grep -qE '^name: sysadmin$' "$tmp" \
        || ! grep -qE '^description: .+' "$tmp" \
        || ! grep -qx 'model: inherit' "$tmp" \
@@ -249,6 +253,7 @@ EOF
     # успех.
     if [ ! -s "$bridge" ] \
        || ! grep -qF "$sysadmin_root/CLAUDE.md" "$bridge" \
+       || ! grep -qxF "**\`$sysadmin_root/\`**" "$bridge" \
        || ! grep -qE '^name: sysadmin$' "$bridge" \
        || ! grep -qE '^description: .+' "$bridge" \
        || ! grep -qx 'model: inherit' "$bridge" \
