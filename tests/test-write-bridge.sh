@@ -28,6 +28,9 @@ WRITE_BRIDGE_LIB="${WRITE_BRIDGE_LIB:-$ROOT/.claude/skills/_lib/write-bridge.sh}
 # Читатель указателя подменяется отдельно: мутационная проверка обязана портить и его —
 # половина контракта живёт там (диверсант сверки 2026-08-20, круг 4).
 FIND_CONFIG_LIB="${FIND_CONFIG_LIB:-$ROOT/.claude/skills/_lib/find-config.sh}"
+# Самопроверка установки подменяется отдельно: её вердикт — последний рубеж перед тем, как
+# оператор уйдёт работать, и он уже был ложно-зелёным (сверка круга 9).
+SELF_TEST_LIB="${SELF_TEST_LIB:-$ROOT/.claude/skills/_lib/self-test-setup.sh}"
 # shellcheck source=/dev/null
 source "$WRITE_BRIDGE_LIB"
 
@@ -533,6 +536,66 @@ if ln -s "$TMPROOT/nowhere-at-all" "$(bridge_file)" 2>/dev/null; then
     printf '%s' "$out" | grep -qF "висячей символической ссылкой"; check $? "о висячей ссылке предупреждено"
 else
     skip "висячая ссылка на месте указателя" "символические ссылки в этой среде не создаются"
+fi
+
+echo "== 13. Блочный скаляр в description: строка непустая, значение пустое"
+# Диверсант круга 9. `description: |` проходит проверку `^description: .+`, но YAML читает
+# такое описание как пустую строку: обязательный по контракту субагентов ключ фактически
+# отсутствует, а все сторожа зелены.
+use_home blockdesc
+write_bridge "$BRAIN" >/dev/null 2>&1
+BD="$(bridge_file)"
+awk '{ if (NR<=5 && index($0,"description: ")==1) print "description: |"; else print }' "$BD" > "$BD.tmp" && command mv "$BD.tmp" "$BD"
+grep -qx 'description: |' "$BD"; check $? "стенд: описание заменено блочным скаляром"
+mv() { return 0; }
+out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
+unset -f mv
+[ "$rc" -ne 0 ]; check $? "блочный скаляр в description: код возврата не ноль"
+if printf '%s' "$out" | grep -qF "$SUCCESS_MARK"; then bad "принято описание, пустое после разбора YAML"; else ok "пустое после разбора описание не принято"; fi
+
+echo "== 13б. Незакрытая последовательность в description рвёт разбор frontmatter"
+use_home brokendesc
+write_bridge "$BRAIN" >/dev/null 2>&1
+BR2="$(bridge_file)"
+awk '{ if (NR<=5 && index($0,"description: ")==1) print "description: [unterminated"; else print }' "$BR2" > "$BR2.tmp" && command mv "$BR2.tmp" "$BR2"
+grep -qx 'description: \[unterminated' "$BR2"; check $? "стенд: описание стало незакрытой последовательностью"
+mv() { return 0; }
+out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
+unset -f mv
+[ "$rc" -ne 0 ]; check $? "невалидный YAML в description: код возврата не ноль"
+if printf '%s' "$out" | grep -qF "$SUCCESS_MARK"; then bad "принят frontmatter, который YAML не разбирает"; else ok "неразбираемый frontmatter не принят"; fi
+
+echo "== 14. Корень перестал быть корнем во время записи"
+# Между входной проверкой и постусловием каталог может перестать быть корнем мозга. Тогда
+# указатель ведёт туда, откуда читатель его уже не примет, — а запись «удалась» (круг 9).
+use_home vanishing
+VANISH="$TMPROOT/vanishing-root"; mkdir -p "$VANISH/.claude/skills"; : > "$VANISH/CLAUDE.md"; : > "$VANISH/.sysadmin-root"
+# `mv` переносит файл штатно и заодно разбирает корень — имитация гонки без гонки.
+mv() { command mv "$@" 2>/dev/null; rm -f "$VANISH/.sysadmin-root"; rmdir "$VANISH/.claude/skills" "$VANISH/.claude" 2>/dev/null; return 0; }
+out="$(write_bridge "$VANISH" 2>&1)"; rc=$?
+unset -f mv
+[ "$rc" -ne 0 ]; check $? "исчезнувший корень: код возврата не ноль"
+printf '%s' "$out" | grep -qF "перестал быть корнем мозга"; check $? "исчезнувший корень: причина названа верно"
+if printf '%s' "$out" | grep -qF "$SUCCESS_MARK"; then bad "напечатан успех при исчезнувшем корне"; else ok "успех при исчезнувшем корне не напечатан"; fi
+
+echo "== 15. Самопроверка установки не зеленеет на деградировавшем корне"
+# Круг 9: `self_test_setup` печатала «bridge-файл на месте» для каталога, который читатель
+# указателя уже отвергает. Ложно-зелёный вердикт установки — худший класс отказа: оператор
+# уходит работать с агентом, которого нет.
+if [ -f "$ROOT/.claude/skills/_lib/self-test-setup.sh" ] && [ -f "$ROOT/agent-config.json" ]; then
+    use_home selftest
+    DEG="$TMPROOT/degraded-selftest"; mkdir -p "$DEG/.claude/skills"; : > "$DEG/CLAUDE.md"; : > "$DEG/.sysadmin-root"
+    write_bridge "$DEG" >/dev/null 2>&1
+    cp "$ROOT/agent-config.json" "$DEG/agent-config.json" 2>/dev/null
+    rm -f "$DEG/.sysadmin-root"; rmdir "$DEG/.claude/skills" "$DEG/.claude" 2>/dev/null
+    st_out="$(HOME="$HOME" bash -c '
+        # shellcheck source=/dev/null
+        source "$1"; self_test_setup "$2/agent-config.json" "$2" 2>&1' _ "$SELF_TEST_LIB" "$DEG")"; st_rc=$?
+    [ "$st_rc" -ne 0 ]; check $? "самопроверка на деградировавшем корне: код возврата не ноль"
+    if printf '%s' "$st_out" | grep -qF "Самопроверка пройдена"; then bad "самопроверка объявила установку исправной"; else ok "самопроверка не объявила установку исправной"; fi
+    printf '%s' "$st_out" | grep -qF "не корень мозга"; check $? "самопроверка назвала причину верно"
+else
+    skip "самопроверка установки на деградировавшем корне" "нет self-test-setup.sh или agent-config.json"
 fi
 echo
 echo "────────────────────────────────────────────────────"

@@ -156,6 +156,13 @@ self_test_setup() {
             _stp_add "В bridge-файле не найден путь к мозгу — указатель испорчен."
         elif [ ! -f "$_stp_root/CLAUDE.md" ]; then
             _stp_add "Bridge ведёт на $_stp_root, но там нет CLAUDE.md — указатель в пустоту."
+        elif declare -F _is_bridge_target >/dev/null 2>&1 && ! _is_bridge_target "$_stp_root"; then
+            # Читателя указателя спрашиваем ЕГО же предикатом: самопроверка печатала
+            # «bridge-файл на месте» для каталога, который locate_sysadmin_root уже
+            # отвергает, — ложно-зелёный вердикт установки (сверка круга 9).
+            _stp_add "Bridge ведёт на $_stp_root, но это не корень мозга (нет ни .sysadmin-root, ни .claude/skills) — читатель указателя такой путь отвергнет."
+        elif ! declare -F _is_bridge_target >/dev/null 2>&1 && declare -F _wb_target_ok >/dev/null 2>&1 && ! _wb_target_ok "$_stp_root"; then
+            _stp_add "Bridge ведёт на $_stp_root, но это не корень мозга (нет ни .sysadmin-root, ни .claude/skills) — читатель указателя такой путь отвергнет."
         elif declare -F _wb_check_bridge >/dev/null 2>&1 && ! _wb_check_bridge "$_stp_bridge" "$_stp_root"; then
             _stp_add "Bridge-файл не проходит проверку указателя (frontmatter или каноническая строка пути) — @sysadmin не зарегистрируется."
         elif ! declare -F _wb_check_bridge >/dev/null 2>&1; then
