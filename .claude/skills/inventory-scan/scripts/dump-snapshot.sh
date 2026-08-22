@@ -5,7 +5,7 @@
 # состояния: контейнеры, compose-файлы, сети, тома, ресурсы хоста, cron, nginx,
 # TLS-сертификаты, host-scripts, .env (redacted), systemd-юниты, доступные апдейты.
 #
-# БЕЗОПАСНОСТЬ (redaction v2): секреты в env контейнеров (docker inspect) и в
+# БЕЗОПАСНОСТЬ (redaction v3): секреты в env контейнеров (docker inspect) и в
 # .env-файлах хоста маскируются ДО записи на диск — KEY=value с секрет-именами
 # и креды в URL (scheme://user:pass@host) заменяются на <REDACTED>. Имена
 # переменных сохраняются для аудита. См. meta.txt (redaction_applied) и
@@ -155,20 +155,21 @@ mkdir -p "$SNAPSHOT_DIR"
 # секреты ДО записи на диск — а не надеемся только на .gitignore (последний
 # рубеж, не основная защита).
 #
-# Закрываем ДВА паттерна, оба зафиксированы в references/dump-snapshot-quirks.md:
-#   1. KEY=value   — env-переменные вида OPENROUTER_API_KEY=sk-or-v1-...
-#   2. url://user:pass@host — пароль внутри connection-string (postgres://, redis://, amqp://...)
+# Состав правил и их границы — в references/dump-snapshot-quirks.md и в шапке
+# _lib/redact.sh. Кратко: имя сверяется по сегментам (не подстрокой), границу
+# значения задаёт контекст (кавычки, синтаксис), плюс правила по значению —
+# токены, ключи, креды в URL, PEM. Одно ядро на обе ветки, ADR-0029.
 #
 # Без жёсткой зависимости от jq (его часто нет на macOS/Git-for-Windows у
 # оператора, через которого проходит snapshot — см. инцидент Windows-портабельности).
-# Если jq есть — используем его для structurally-aware redaction .Config.Env;
-# если нет — построчный fallback на sed/grep, работающий везде. Защита не
-# должна зависеть от того, что доустановил оператор.
+# Построчный путь работает везде (POSIX awk); jq нужен только для структурной
+# проекции containers-summary.json. Защита не должна зависеть от того, что
+# доустановил оператор.
 
-REDACTION_VERSION="v2"
+REDACTION_VERSION="v3"
 
-# Функции маскировки redact_stream / redact_json_with_jq живут в единой
-# библиотеке _lib/redact.sh (канон redaction v2) — её же используют
+# Функции маскировки redact_stream / redact_json_deep живут в единой
+# библиотеке _lib/redact.sh (канон redaction v3) — её же используют
 # rotate-secrets и другие скиллы. Не дублируем код: при изменении паттернов
 # правится ОДНО место. Если библиотека не найдена — fail-fast: молча писать
 # снимок без маскировки нельзя (приоритет №1 — секреты не утекают).
@@ -184,10 +185,13 @@ else
     exit 2
 fi
 
+# Метка в meta.txt: `jq` — доступна структурная проекция containers-summary.json;
+# `awk-only` — только построчный путь. Прежнее значение `sed-fallback` стало
+# ложным: с redaction v3 sed в маскировке не участвует вовсе.
 if command -v jq &>/dev/null; then
     REDACTION_TOOL="jq"
 else
-    REDACTION_TOOL="sed-fallback"
+    REDACTION_TOOL="awk-only"
 fi
 
 # === Вспомогательная функция записи секции ===

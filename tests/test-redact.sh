@@ -85,6 +85,178 @@ if command -v jq >/dev/null 2>&1; then
   case "$out" in *"rc=0"*) bad "без jq вернулся успех — должен быть ненулевой код";; *) ok "без jq ненулевой код возврата";; esac
 fi
 
+# ---------------------------------------------------------------------------
+# Дефекты, найденные слепой сверкой 2026-08-22 (задание
+# todos/2026-08-22-redact-defects-TASK.md). Каждый блок ниже писался ПАДАЮЩИМ на
+# ревизии b56f931 и обязан краснеть, если соответствующее правило сломать.
+# ---------------------------------------------------------------------------
+
+# nlines <описание> <вывод> <ожидаемое число строк>
+nlines(){
+  local n; n=$(printf '%s\n' "$2" | grep -c '')
+  if [ "$n" = "$3" ]; then ok "$1"; else bad "$1 — строк $n, ожидалось $3"; fi
+}
+
+echo "== A1: значение не обрывается на пробеле, запятой, кавычке"
+out=$(printf 'password: hunter2 %s\n' "$CANARY" | redact_stream)
+leaked "A1 незакавыченное YAML-значение до конца строки" "$out"
+out=$(printf 'DB_PASSWORD="my %s phrase"\n' "$CANARY" | redact_stream)
+leaked "A1 значение в двойных кавычках целиком" "$out"
+out=$(printf "DB_PASSWORD='my %s phrase'\n" "$CANARY" | redact_stream)
+leaked "A1 значение в одинарных кавычках целиком" "$out"
+out=$(printf 'POSTGRES_PASSWORD=p4ss,%s,tail\n' "$CANARY" | redact_stream)
+leaked "A1 значение с запятыми" "$out"
+# Многострочный YAML-блок: маскировался знак '|', тело блока уходило целиком.
+# Ровно этим путём в 2026-08-08 утёк sb_secret_.
+out=$(printf 'service_key: |\n  %s\n  %s\nimage: nginx:1.27\n' "$CANARY" "$CANARY" | redact_stream)
+leaked "A1 тело многострочного YAML-блока" "$out"
+kept  "A1 соседний ключ после блока сохранён" "$out" 'nginx:1.27'
+
+echo "== A2: непрозрачные токены по значению"
+out=$(printf 'Authorization: Bearer ghp_%s\n' "$CANARY" | redact_stream);   leaked "A2 GitHub ghp_ в заголовке" "$out"
+out=$(printf 'x github_pat_%s y\n' "$CANARY" | redact_stream);              leaked "A2 GitHub fine-grained PAT" "$out"
+out=$(printf 'x glpat-%s y\n' "$CANARY" | redact_stream);                   leaked "A2 GitLab glpat-" "$out"
+out=$(printf 'x sk-ant-api03-%s y\n' "$CANARY" | redact_stream);            leaked "A2 Anthropic sk-ant-" "$out"
+out=$(printf 'x AIza%s y\n' "$CANARY" | redact_stream);                     leaked "A2 Google AIza" "$out"
+out=$(printf 'x xoxp-%s y\n' "$CANARY" | redact_stream);                    leaked "A2 Slack xoxp-" "$out"
+out=$(printf 'BOT=1234567890:%s\n' "$CANARY" | redact_stream);              leaked "A2 токен Telegram" "$out"
+out=$(printf 'machine github.com login bot password %s\n' "$CANARY" | redact_stream); leaked "A2 .netrc" "$out"
+out=$(printf 'db.example.com:5432:app:appuser:%s\n' "$CANARY" | redact_stream);       leaked "A2 .pgpass" "$out"
+out=$(printf 'admin:$apr1$abcd$%s\n' "$CANARY" | redact_stream);            leaked "A2 хеш htpasswd" "$out"
+out=$(printf '{"auths":{"h":{"auth":"%s"}}}\n' "$CANARY" | redact_stream);  leaked "A2 auth в docker config.json" "$out"
+
+echo "== A3: учётные данные во флагах командной строки"
+out=$(printf 'curl -u deploy:%s https://x\n' "$CANARY" | redact_stream);    leaked "A3 curl -u user:pass" "$out"
+out=$(printf 'redis-cli -a %s ping\n' "$CANARY" | redact_stream);           leaked "A3 redis-cli -a" "$out"
+out=$(printf 'tool --password %s\n' "$CANARY" | redact_stream);             leaked "A3 --password VALUE" "$out"
+out=$(printf 'tool --token=%s\n' "$CANARY" | redact_stream);                leaked "A3 --token=VALUE" "$out"
+
+echo "== A4: PEM-блоки с суффиксом (PGP … PRIVATE KEY BLOCK)"
+out=$(printf -- '-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBGXaBc0BCADHt7t7%s\n-----END PGP PRIVATE KEY BLOCK-----\n' "$CANARY" | redact_stream) # gitleaks:allow
+leaked "A4 многострочный PGP-блок" "$out"
+out=$(printf -- '-----BEGIN RSA PRIVATE KEY-----\nMIIE%s\n-----END RSA PRIVATE KEY-----\n' "$CANARY" | redact_stream) # gitleaks:allow
+leaked "A4 многострочный RSA-ключ" "$out"
+
+echo "== B1: незакрытый PEM-блок НЕ съедает остаток потока"
+in6=$(printf '%s\n' 'nginx: [emerg] PEM_read_bio_PrivateKey() failed, expected "-----BEGIN PRIVATE KEY-----"' \
+                    'CONTAINER ID   IMAGE          PORTS' \
+                    'a1b2c3d4e5f6   postgres:16    0.0.0.0:5432->5432/tcp' \
+                    'network: proxy-corridor  subnet 172.28.0.0/16' \
+                    'volume: pgdata 42G' \
+                    'cron: 0 3 * * * /opt/backup.sh')
+out=$(printf '%s\n' "$in6" | redact_stream 2>/dev/null)
+nlines "B1 шесть строк на входе — шесть на выходе" "$out" 6
+kept   "B1 таблица docker ps сохранена" "$out" 'postgres:16'
+# Сама строка-триггер тоже обязана уцелеть: в ней нет ключа, это сообщение об
+# ошибке. Без этой проверки мутант «искать маркер подстрокой» набор не замечал —
+# число строк сходилось, а первая строка молча подменялась маркером.
+kept   "B1 сообщение nginx сохранено"  "$out" 'PEM_read_bio_PrivateKey'
+kept   "B1 сеть сохранена"              "$out" 'proxy-corridor'
+kept   "B1 cron сохранён"               "$out" '/opt/backup.sh'
+# Оборванный настоящий ключ: тело не утекает, но следующая секция выживает.
+out=$(printf -- '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADAN%s\nCONTAINER ID   IMAGE\nvolume: pgdata 42G\n' "$CANARY" | redact_stream 2>/dev/null) # gitleaks:allow
+leaked "B1 тело оборванного ключа не утекло" "$out"
+kept   "B1 секция после оборванного ключа сохранена" "$out" 'pgdata 42G'
+
+echo "== B2: имя сверяется по границам сегмента, а не подстрокой"
+out=$(printf '%s\n' 'KEYBOARD_LAYOUT=us' 'MONKEY_MODE=on' 'API_URL=https://api.example.com/v1' \
+                    'DATABASE_HOST=db.internal' 'IMAGE_VERSION=1.27.3' | redact_stream)
+kept "B2 KEYBOARD_LAYOUT не тронут" "$out" 'KEYBOARD_LAYOUT=us'
+kept "B2 MONKEY_MODE не тронут"     "$out" 'MONKEY_MODE=on'
+kept "B2 API_URL не тронут"         "$out" 'API_URL=https://api.example.com/v1'
+kept "B2 DATABASE_HOST не тронут"   "$out" 'DATABASE_HOST=db.internal'
+kept "B2 IMAGE_VERSION не тронут"   "$out" 'IMAGE_VERSION=1.27.3'
+# Имена с секрет-словом И безопасным хвостом: здесь работает уже не граница
+# сегмента, а белый список. Без этих случаев его поломка набором не замечалась
+# (мутационный контроль), то есть правило числилось покрытым напрасно.
+out=$(printf '%s\n' 'SECRET_KEY_FILE=/run/secrets/app' 'TOKEN_URL=https://auth.example.com/token' \
+                    'SESSION_TIMEOUT=30' 'PRIVATE_KEY_PATH=/etc/ssl/private/app.pem' | redact_stream)
+kept "B2 SECRET_KEY_FILE — путь сохранён"   "$out" '/run/secrets/app'
+kept "B2 TOKEN_URL — адрес сохранён"        "$out" 'https://auth.example.com/token'
+kept "B2 SESSION_TIMEOUT — число сохранено" "$out" 'SESSION_TIMEOUT=30'
+kept "B2 PRIVATE_KEY_PATH — путь сохранён"  "$out" '/etc/ssl/private/app.pem'
+# Сужение не должно ослабить маскировку: настоящие имена по-прежнему ловятся.
+out=$(printf '%s\n' "AWS_ACCESS_KEY_ID=$CANARY" | redact_stream);   leaked "B2 AWS_ACCESS_KEY_ID всё ещё ловится" "$out"
+out=$(printf '%s\n' "API_TOKEN_PROD=$CANARY" | redact_stream);      leaked "B2 API_TOKEN_PROD всё ещё ловится" "$out"
+out=$(printf '%s\n' "{\"authToken\":\"$CANARY\"}" | redact_stream); leaked "B2 camelCase authToken ловится" "$out"
+out=$(printf '%s\n' "x-api-key: $CANARY" | redact_stream);          leaked "B2 заголовок x-api-key ловится" "$out"
+# Пароль в URL по-прежнему ловится, хотя имя в whitelist.
+out=$(printf 'DATABASE_URL=postgres://u:%s@h/db\n' "$CANARY" | redact_stream)
+leaked "B2 пароль в DATABASE_URL ловится значением" "$out"
+
+echo "== B3: построчный путь не ломает валидность JSON"
+if command -v jq >/dev/null 2>&1; then
+  out=$(printf '%s\n' '{"Keys": null, "ApiVersion": "1.41"}' | redact_stream)
+  if printf '%s' "$out" | jq -e . >/dev/null 2>&1; then ok "B3 JSON остался валиден"; else bad "B3 JSON сломан: $out"; fi
+  kept "B3 ApiVersion не съеден как секрет" "$out" '1.41'
+  # Закавыченное значение маскируется РОВНО внутри кавычек: и документ остаётся
+  # разбираемым, и соседние поля живы. Проверка на точность, а не на секретность.
+  out=$(printf '%s\n' "{\"password\": \"$CANARY\", \"image\": \"nginx:1.27\"}" | redact_stream)
+  leaked "B3 закавыченное значение замаскировано" "$out"
+  kept   "B3 соседнее поле после кавычек сохранено" "$out" 'nginx:1.27'
+  if printf '%s' "$out" | jq -e . >/dev/null 2>&1; then ok "B3 JSON с закавыченным значением валиден"; else bad "B3 JSON с закавыченным значением сломан: $out"; fi
+  out=$(printf '%s\n' "{\"Env\":[\"API_TOKEN=$CANARY\",\"IMAGE=nginx:1.27\"]}" | redact_stream)
+  leaked "B3 секрет в массиве Env замаскирован" "$out"
+  kept   "B3 соседний элемент массива сохранён" "$out" 'nginx:1.27'
+  if printf '%s' "$out" | jq -e . >/dev/null 2>&1; then ok "B3 JSON с массивом Env валиден"; else bad "B3 JSON с массивом Env сломан: $out"; fi
+fi
+
+echo "== A5: секрет в ИМЕНИ ключа JSON"
+if command -v jq >/dev/null 2>&1; then
+  # Приманка в ИМЕНИ отличается от приманки в значении. Одинаковые — и проверка
+  # ложно зеленеет: имя чинится заодно, потому что попало в карту замен как
+  # значение (мутационный контроль поймал именно это).
+  KEYCANARY="CANARY_ONLY_IN_KEY_1a2b3c4d5e6f_DO_NOT_LEAK"
+  out=$(printf '{"sb_secret_%s":"public","safe":"sb_secret_%s"}' "$KEYCANARY" "$CANARY" | redact_json_deep)
+  leaked "A5 значение по-прежнему маскируется" "$out"
+  case "$out" in *"$KEYCANARY"*) bad "A5 имя ключа тоже маскируется — приманка утекла";; *) ok "A5 имя ключа тоже маскируется";; esac
+  if printf '%s' "$out" | jq -e . >/dev/null 2>&1; then ok "A5 JSON остался валиден"; else bad "A5 JSON сломан"; fi
+fi
+
+echo "== A6: обе ветки согласованы на одном входе"
+if command -v jq >/dev/null 2>&1; then
+  # Один корпус — два пути. Расхождение чёрных списков (signature, requirepass,
+  # SQL PASSWORD, двоеточие) обнаруживается здесь, а не в снимке на проде.
+  corpus_case(){
+    local desc="$1" line="$2" o1 o2
+    o1=$(printf '%s\n' "$line" | redact_stream)
+    o2=$(printf '%s' "$line" | jq -R . | redact_json_deep)
+    leaked "A6 построчный: $desc" "$o1"
+    leaked "A6 глубокий:   $desc" "$o2"
+  }
+  corpus_case "signature в query"   "https://x.invalid/cb?signature=$CANARY"
+  corpus_case "sig в query"         "https://x.invalid/cb?sig=$CANARY"
+  corpus_case "requirepass"         "CONFIG SET requirepass $CANARY"
+  corpus_case "SQL PASSWORD"        "ALTER USER u WITH PASSWORD '$CANARY';"
+  corpus_case "IDENTIFIED BY"       "CREATE USER u IDENTIFIED BY '$CANARY';"
+  corpus_case "секрет-слово с ':'"  "api_key: $CANARY"
+  corpus_case "флаг --password"     "tool --password $CANARY"
+  corpus_case "curl -u"             "curl -u deploy:$CANARY https://x"
+  corpus_case "ghp_-токен"          "Authorization: Bearer ghp_$CANARY"
+  corpus_case "AWS-ключ по значению" "AKIAIOSFODNN7EXAMPLE"
+fi
+
+echo "== B4: redact_json_with_jq честна на битом входе"
+if command -v jq >/dev/null 2>&1; then
+  # `set +o pipefail` — не придирка, а слабейшая среда вызывающего: контракт
+  # «ненулевой код на битом входе» держался ИСКЛЮЧИТЕЛЬНО на pipefail в чужом
+  # скрипте. Под этим набором pipefail включён (строка 16), и проверка без явного
+  # отключения проходила при полностью сломанном контракте — ложный зелёный.
+  out=$(set +o pipefail; printf 'not json {{{' | redact_json_with_jq 2>/dev/null; echo "rc=$?")
+  case "$out" in *"rc=0"*) bad "B4 битый JSON дал код возврата 0 вопреки контракту";; *) ok "B4 битый JSON — ненулевой код возврата";; esac
+  case "$out" in "rc="*) ok "B4 на битом входе ничего не напечатано";; *) bad "B4 на битом входе напечатано лишнее";; esac
+  out=$(set +o pipefail; printf '' | redact_json_with_jq 2>/dev/null; echo "rc=$?")
+  case "$out" in *"rc=0"*) bad "B4 пустой вход дал код возврата 0";; *) ok "B4 пустой вход — ненулевой код возврата";; esac
+  out=$(set +o pipefail; printf '{"Config":{"Env":["API_TOKEN=%s"]}}' "$CANARY" | redact_json_with_jq; echo "rc=$?")
+  leaked "B4 на исправном входе маскирует" "$out"
+  case "$out" in *"rc=0"*) ok "B4 на исправном входе код возврата 0";; *) bad "B4 на исправном входе ненулевой код";; esac
+  # Мусор в хвосте: jq успевает напечатать первый документ и падает. Проверка
+  # «вывод непустой» такой отказ не видит — его ловит только код возврата самого
+  # jq. Частичный результат нельзя выдавать за успешный.
+  out=$(set +o pipefail; printf '{"Config":{"Env":["API_TOKEN=%s"]}} мусор' "$CANARY" | redact_json_with_jq 2>/dev/null; echo "rc=$?")
+  case "$out" in *"rc=0"*) bad "B4 частичный разбор выдан за успех";; *) ok "B4 мусор в хвосте — ненулевой код возврата";; esac
+fi
+
 echo
 echo "Итого: прошло $PASS, упало $FAIL"
 [ "$FAIL" -eq 0 ]
