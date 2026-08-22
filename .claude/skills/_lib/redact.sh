@@ -403,8 +403,21 @@ redact_json_deep() {
     if [ "$no" != "$nr" ]; then rm -rf "$tmpd"; return 4; fi
 
     printf '%s' "$doc" | jq --slurpfile O "$tmpd/orig" --slurpfile R "$tmpd/red" '
+        # Маскировка ИМЁН схлопывает разные ключи в один: два `sb_secret_*` дают
+        # два `<REDACTED>`, и объект молча теряет запись вместе со значением —
+        # то же уничтожение данных, против которого затевалась v3. Поэтому
+        # повторяющееся замаскированное имя получает различитель `~N`.
+        def rekey($m):
+          . as $obj
+          | reduce (keys_unsorted[]) as $k ({out: {}, seen: {}};
+              (($m[$k] // $k)) as $nk
+              | ((.seen[$nk] // 0) + 1) as $c
+              | .seen[$nk] = $c
+              | .out[(if $c > 1 then "\($nk)~\($c)" else $nk end)] = $obj[$k]
+            )
+          | .out;
         def rmap($m):
-          if   type == "object" then with_entries(.key |= ($m[.] // .) | .value |= rmap($m))
+          if   type == "object" then rekey($m) | map_values(rmap($m))
           elif type == "array"  then map(rmap($m))
           elif type == "string" then ($m[.] // .)
           else . end;

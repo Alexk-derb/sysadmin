@@ -210,6 +210,14 @@ if command -v jq >/dev/null 2>&1; then
   out=$(printf '{"sb_secret_%s":"public","safe":"sb_secret_%s"}' "$KEYCANARY" "$CANARY" | redact_json_deep)
   leaked "A5 значение по-прежнему маскируется" "$out"
   case "$out" in *"$KEYCANARY"*) bad "A5 имя ключа тоже маскируется — приманка утекла";; *) ok "A5 имя ключа тоже маскируется";; esac
+  # Маскировка имён СХЛОПЫВАЕТ разные ключи в один: два `sb_secret_*` дают два
+  # `<REDACTED>`, и объект молча теряет запись целиком — вместе со значением.
+  # Это тот же класс «данные уничтожаются», ради которого затевалась v3.
+  out=$(printf '{"sb_secret_AAAAAAAAAAAA":"one","sb_secret_BBBBBBBBBBBB":"two","keep":"me"}' | redact_json_deep)
+  n=$(printf '%s' "$out" | jq 'length' 2>/dev/null)
+  if [ "$n" = "3" ]; then ok "A5 три ключа остались тремя"; else bad "A5 ключей $n, ожидалось 3 — записи схлопнулись: $out"; fi
+  kept "A5 значение схлопнутого ключа сохранено" "$out" '"one"'
+  kept "A5 второе значение сохранено"            "$out" '"two"'
   if printf '%s' "$out" | jq -e . >/dev/null 2>&1; then ok "A5 JSON остался валиден"; else bad "A5 JSON сломан"; fi
 fi
 
