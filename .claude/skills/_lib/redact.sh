@@ -186,18 +186,60 @@ function indent(s,   i, c, n) {
     return n
 }
 
+# Начинается ли текущий контекст сразу перед именем? Контекст — вся строка либо
+# содержимое объемлющей строки-значения (начало — последняя НЕэкранированная
+# кавычка). Дефис элемента списка YAML считается частью начала.
+function ctx_atstart(t,   i, c, last, tail) {
+    last = 0; i = 1
+    while (i <= length(t)) {
+        c = substr(t, i, 1)
+        if (c == "\\") { i += 2; continue }
+        if (c == "\"") last = i
+        i++
+    }
+    tail = (last > 0) ? substr(t, last + 1) : t
+    return (tail ~ /^[ \t]*(-[ \t]+)?$/)
+}
+
+# Глубина flow-контейнера (`{`/`[`) вне строк. Внутри него значение при `:`
+# кончается запятой или скобкой: правило «всегда до конца строки» обрубало
+# `{password: X, host: h, port: 5432}` до первого поля и теряло остальное.
+function flow_depth(t,   i, c, st, d) {
+    i = 1; st = 0; d = 0
+    while (i <= length(t)) {
+        c = substr(t, i, 1)
+        if (c == "\\") { i += 2; continue }
+        if (c == "\"") st = 1 - st
+        else if (!st) {
+            if (c == "{" || c == "[") d++
+            else if (c == "}" || c == "]") d--
+        }
+        i++
+    }
+    return (d > 0) ? d : 0
+}
+
 # Проход по присваиваниям NAME=value / "NAME": value. Границу значения задаёт
 # контекст, а не первый пробел (дефект A1) — и он же не даёт съесть остаток
 # JSON-строки или сломать документ (дефект B3).
-function scan_names(s,   out, rest, m, pre, nm, sep, nq, instr, c, j, val, tail, guard, atstart) {
+function scan_names(s,   out, rest, m, pre, nm, sep, nq, instr, c, j, val, tail, guard, atstart, depth) {
     out = ""; rest = s; instr = 0; guard = 0
     while (match(rest, ASSIGN)) {
         if (++guard > 2000) break
         pre  = substr(rest, 1, RSTART - 1)
         m    = substr(rest, RSTART, RLENGTH)
         rest = substr(rest, RSTART + RLENGTH)
-        # Присваивание начинает строку? Всё, что накоплено до имени, — пробелы.
-        atstart = ((out pre) ~ /^[ 	]*$/)
+        # Начинает ли присваивание свой КОНТЕКСТ? Контекст — строка целиком либо
+        # содержимое объемлющей строки-значения (её начало — последняя открывшая
+        # кавычка). Второе обязательно: JSON-ветка передаёт ядру то же
+        # содержимое, но в кавычках, и без пересчёта относительно них ветки
+        # давали РАЗНЫЙ результат на одном входе — прямое опровержение
+        # «расходиться нечему» (находка круга 3).
+        #
+        # Дефис элемента списка YAML считается частью начала: `- NAME=значение с
+        # пробелами` — это скаляр YAML, а не командная строка.
+        atstart = ctx_atstart(out pre)
+        depth   = flow_depth(out pre)
         instr = qstate(pre m, instr)
         out = out pre m
 
@@ -230,23 +272,33 @@ function scan_names(s,   out, rest, m, pre, nm, sep, nq, instr, c, j, val, tail,
             if (j > 0) { out = out "'"'"'" R "'"'"'"; rest = substr(rest, j + 1); continue }
             out = out "'"'"'" R; rest = ""; break
         }
-        # Внутри JSON-строки значение кончается закрывающей кавычкой — только это
-        # и удерживает `"Env":["API_TOKEN=x","IMAGE=nginx"]` от потери соседей.
+        # Внутри строки-значения. Граница — та же, что и на верхнем уровне,
+        # только «конец строки» означает закрывающую кавычку: присваивание с
+        # начала содержимого идёт до конца значения (`"API_TOKEN=x"` в массиве
+        # Env), а НЕ с начала — до пробела (`"runner --token=X --port=8080"`).
+        # Без второго случая построчный и глубокий пути расходились на одном и
+        # том же содержимом.
         if (instr) {
+            if (sep == "=" && !atstart) {
+                match(rest, /^[^ \t"]*/)
+                out = out R; rest = substr(rest, RLENGTH + 1); continue
+            }
             j = find_close(rest, 1, "\"")
             if (j > 0) { out = out R; rest = substr(rest, j); continue }
             out = out R; rest = ""; break
         }
-        # Голый литерал JSON (null / число / true): заменяем СТРОКОЙ, иначе
-        # документ перестаёт разбираться.
-        if (nq && sep == ":") {
+        # Голый литерал JSON (null / число / true) и flow-отображение YAML:
+        # значение кончается запятой или скобкой. Кавычки в замене нужны только
+        # JSON-форме (имя было в кавычках), иначе документ перестанет разбираться.
+        if (sep == ":" && (nq || depth > 0)) {
             match(rest, /^[^,}\]]*/)
             val = substr(rest, 1, RLENGTH); rest = substr(rest, RLENGTH + 1)
             tail = ""
             while (val != "" && (substr(val, length(val), 1) == " " || substr(val, length(val), 1) == "\t")) {
                 tail = substr(val, length(val), 1) tail; val = substr(val, 1, length(val) - 1)
             }
-            out = out "\"" R "\"" tail
+            if (nq) out = out "\"" R "\"" tail
+            else    out = out R tail
             continue
         }
         # Блочный скаляр YAML: тело лежит на следующих строках. Раньше

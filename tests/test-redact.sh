@@ -241,6 +241,42 @@ out=$(printf -- '- api_key: %s option=%s\n' "$CANARY" "$CANARY" | redact_stream)
 leaked "D2 YAML-ключ в элементе списка не режется" "$out"
 out=$(printf -- '  - token: %s extra=%s\n' "$CANARY" "$CANARY" | redact_stream)
 leaked "D2 YAML-ключ во вложенном элементе не режется" "$out"
+# Ключ посреди строки (лог-запись с отметкой времени). Проверяет само условие
+# `sep == "="`: элементы списка после правки E1 считаются началом контекста и
+# до этой ветки не доходят, поэтому без лог-случая мутант «применять и к
+# двоеточию» набор снова пропускал.
+out=$(printf -- '2026-08-22 12:00:00 api_key: %s %s\n' "$CANARY" "$CANARY" | redact_stream)
+leaked "D2 ключ посреди строки не режется по пробелу" "$out"
+# То же ВНУТРИ строки-значения JSON: правило про `=` действует и там, и его
+# отсутствие набор не замечал — ветка «внутри строки» проверялась только на
+# присваиваниях со знаком равенства.
+out=$(printf -- '{"log":"2026-08-22 api_key: %s %s"}\n' "$CANARY" "$CANARY" | redact_stream)
+leaked "D2 ключ посреди строки-значения не режется по пробелу" "$out"
+
+# E1. Элемент списка YAML с присваиванием: `- NAME=значение с пробелами`. Дефис
+# принимался за признак командной строки, значение обрывалось на пробеле и хвост
+# секрета уходил в снимок. Класс A, внесённый правкой круга 2 (находка круга 3).
+out=$(printf -- '- DB_PASSWORD=%s %s\n' "$CANARY" "$CANARY" | redact_stream)
+leaked "E1 значение в элементе списка YAML идёт до конца строки" "$out"
+out=$(printf -- '  - API_TOKEN=%s хвост %s\n' "$CANARY" "$CANARY" | redact_stream)
+leaked "E1 то же во вложенном элементе" "$out"
+# Но список, содержащий КОМАНДУ, по-прежнему разбирается как командная строка.
+out=$(printf -- '- runner --token=%s --port=8080 --mode=check\n' "$CANARY" | redact_stream)
+leaked "E1 команда внутри элемента списка маскируется" "$out"
+kept   "E1 порт в команде внутри списка сохранён" "$out" '--port=8080'
+kept   "E1 режим в команде внутри списка сохранён" "$out" '--mode=check'
+
+# E2. Flow-style YAML: значение при `:` кончается запятой или скобкой, а не
+# концом строки. Правило «при : всегда до конца строки» уничтожало остаток
+# отображения и оставляло обрубок (находка круга 3).
+out=$(printf '{password: %s, host: db.invalid, port: 5432}\n' "$CANARY" | redact_stream)
+leaked "E2 flow-style YAML: секрет замаскирован" "$out"
+kept   "E2 flow-style YAML: соседний host сохранён" "$out" 'db.invalid'
+kept   "E2 flow-style YAML: соседний port сохранён" "$out" '5432'
+kept   "E2 flow-style YAML: закрывающая скобка на месте" "$out" '}'
+out=$(printf '[{api_key: %s, image: nginx:1.27}]\n' "$CANARY" | redact_stream)
+leaked "E2 flow-style в массиве: секрет замаскирован" "$out"
+kept   "E2 flow-style в массиве: образ сохранён" "$out" 'nginx:1.27'
 
 # C2. Незакрытый PEM-блок: строки тела неотличимы от полезного однострочного
 # вывода (`docker ps -q`). Жёсткое требование задания — либо сохранить остальные
@@ -402,6 +438,24 @@ if command -v jq >/dev/null 2>&1; then
   corpus_case "curl -u"             "curl -u deploy:$CANARY https://x"
   corpus_case "ghp_-токен"          "Authorization: Bearer ghp_$CANARY"
   corpus_case "AWS-ключ по значению" "AKIAIOSFODNN7EXAMPLE"
+
+  # E3. Ветки обязаны совпадать не только в том, ЧТО замаскировано, но и в том,
+  # что СОХРАНЕНО. Обёртка `@json` добавляет внешние кавычки, ядро уходило в
+  # ветку «внутри строки» и маскировало до конца значения — построчный путь тот
+  # же хвост сохранял. Это было реальным рассинхроном веток, то есть опровержением
+  # главного утверждения решения (находка круга 3).
+  same_kept(){
+    local desc="$1" line="$2" needle="$3" o1 o2
+    o1=$(printf '%s\n' "$line" | redact_stream)
+    o2=$(printf '%s' "$line" | jq -R . | redact_json_deep)
+    leaked "E3 построчный: $desc" "$o1"
+    leaked "E3 глубокий:   $desc" "$o2"
+    kept   "E3 построчный сохранил соседа: $desc" "$o1" "$needle"
+    kept   "E3 глубокий сохранил соседа:   $desc" "$o2" "$needle"
+  }
+  same_kept "командная строка с флагами" "runner --token=$CANARY --port=8080 --mode=check" '--port=8080'
+  same_kept "несколько присваиваний"     "Environment=DB_PASSWORD=$CANARY NEXT_HOST=db.invalid" 'NEXT_HOST=db.invalid'
+  same_kept "элемент списка YAML"        "- app --api-key=$CANARY --retries=3" '--retries=3'
 fi
 
 echo "== B4: redact_json_with_jq честна на битом входе"
