@@ -89,17 +89,17 @@ case "$TYPE" in
     postgres)
         printf "ALTER USER %s WITH PASSWORD '%s';\n" "$ROLE" "$NEW" \
             | ssh "$SERVER" "docker exec -i $CONTAINER psql -U postgres" 2>&1 \
-            | redact_stream
+            | redact_stream_soft
         ;;
     mysql)
         printf "ALTER USER '%s'@'%%' IDENTIFIED BY '%s'; FLUSH PRIVILEGES;\n" "$ROLE" "$NEW" \
             | ssh "$SERVER" "docker exec -i $CONTAINER mysql -u root" 2>&1 \
-            | redact_stream
+            | redact_stream_soft
         ;;
     redis)
         printf 'CONFIG SET requirepass %s\n' "$NEW" \
             | ssh "$SERVER" "docker exec -i $CONTAINER redis-cli" 2>&1 \
-            | redact_stream
+            | redact_stream_soft
         ;;
     *)
         echo "Неизвестный тип: $TYPE (ожидаю postgres|mysql|redis)"
@@ -126,13 +126,13 @@ printf '%s\n%s\n%s\n' "$NEW" "$VAR_NAME" "$ENV_FILES_SPACE" | ssh "$SERVER" '
         '\'' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
         echo "  ok: $f"
     done
-' 2>&1 | redact_stream
+' 2>&1 | redact_stream_soft
 
 # 4. Restart всех потребителей
 echo "[4/5] Restart потребителей..."
 IFS=',' read -ra DIRS <<< "$CONSUMER_DIRS"
 for dir in "${DIRS[@]}"; do
-    ssh "$SERVER" "cd '$dir' && docker compose restart" 2>&1 | redact_stream
+    ssh "$SERVER" "cd '$dir' && docker compose restart" 2>&1 | redact_stream_soft
     echo "  ✓ $dir restarted"
 done
 

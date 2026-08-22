@@ -225,8 +225,12 @@ run_remote() {
         echo "ERROR: ${cmd}" >> "$outfile"
     fi
     # stderr пишем рядом, но только если он непустой — не плодим мусорные файлы.
+    # Отказ маскировки (незакрытый блок ключа, rc=3) помечаем, но снимок им не
+    # обрываем: под `set -e` необработанный ненулевой код убил бы весь прогон.
     if [ -s "$err_raw" ]; then
-        redact_stream < "$err_raw" > "$errfile"
+        if ! redact_stream < "$err_raw" > "$errfile"; then
+            echo "     ПРЕДУПРЕЖДЕНИЕ: маскировка отказала на stderr ${label} — файл неполон."
+        fi
     fi
     rm -f "$err_raw"
 }
@@ -282,7 +286,8 @@ done
   echo "#         (возможна коллизия engine-id при клонировании data-root);"
   echo "#         unreachable — сокет есть, но демон не ответил (нет прав или не запущен)."
   printf '%s' "$DAEMONS"
-} | redact_stream > "${SNAPSHOT_DIR}/docker-endpoints.txt"
+} | redact_stream > "${SNAPSHOT_DIR}/docker-endpoints.txt" || \
+    echo "     ПРЕДУПРЕЖДЕНИЕ: маскировка отказала на docker-endpoints.txt — файл неполон."
 
 DAEMON_OK_COUNT=$(printf '%s' "$DAEMONS" | grep -c '|ok$' || true)
 [ -z "$DAEMON_OK_COUNT" ] && DAEMON_OK_COUNT=0
@@ -301,7 +306,8 @@ docker_each() {
     printf '%s' "$DAEMONS" | while IFS='|' read -r tag ep did status; do
         [ "$status" = "ok" ] || continue
         local out="${SNAPSHOT_DIR}/${label}.${tag}.${ext}"
-        run_cmd "DOCKER_HOST='$ep' $cmd" 2>/dev/null | redact_stream > "$out"
+        run_cmd "DOCKER_HOST='$ep' $cmd" 2>/dev/null | redact_stream > "$out" || \
+            echo "     ПРЕДУПРЕЖДЕНИЕ: секция ${label}.${tag} неполна (команда или маскировка отказали)."
         {
           echo "=== демон ${tag} (${ep}, id=${did}) ==="
           cat "$out"

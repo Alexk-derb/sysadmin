@@ -202,6 +202,76 @@ kept "B2-bis PATH не тронут"            "$out" '/usr/bin:/bin'
 kept "B2-bis DATAPATH_ROOT не тронут"   "$out" '/srv/data'
 kept "B2-bis TOKENIZER_PATH не тронут"  "$out" '/opt/m.model'
 
+echo "== C: находки контрольного круга Codex (2026-08-22)"
+# C1. Несколько присваиваний в ОДНОЙ строке — обычный вид `Environment=` в
+# unit-файлах (`systemctl cat`) и `ExecStart=` с флагами. Граница «до конца
+# строки» уничтожала соседние переменные: класс B, тихо и с кодом возврата ноль.
+out=$(printf 'Environment=DB_PASSWORD=%s NEXT_HOST=db.invalid FEATURE_FLAG=on\n' "$CANARY" | redact_stream)
+leaked "C1 пароль в строке Environment замаскирован" "$out"
+kept   "C1 соседняя переменная NEXT_HOST сохранена"  "$out" 'NEXT_HOST=db.invalid'
+kept   "C1 соседняя переменная FEATURE_FLAG сохранена" "$out" 'FEATURE_FLAG=on'
+out=$(printf 'ExecStart=/usr/bin/app --token=%s --port=8080 --log-level=info\n' "$CANARY" | redact_stream)
+leaked "C1 токен во флаге ExecStart замаскирован" "$out"
+kept   "C1 порт после флага сохранён"              "$out" '--port=8080'
+kept   "C1 уровень логирования сохранён"           "$out" '--log-level=info'
+# Граница А1 при этом не ослабла: значение без последующих присваиваний идёт до конца строки.
+out=$(printf 'POSTGRES_PASSWORD=p4ss %s tail\n' "$CANARY" | redact_stream)
+leaked "C1 значение с пробелами по-прежнему до конца строки" "$out"
+
+# C2. Незакрытый PEM-блок: строки тела неотличимы от полезного однострочного
+# вывода (`docker ps -q`). Жёсткое требование задания — либо сохранить остальные
+# строки, либо ЯВНО отказать ненулевым кодом. Молчаливая потеря запрещена.
+out=$(set +o pipefail; printf '%s\n' '-----BEGIN PRIVATE KEY-----' 'CANARYBODY12345678' 'CANARYCONTAINERID' | redact_stream 2>/dev/null; echo "rc=$?") # gitleaks:allow
+case "$out" in *"rc=0"*) bad "C2 незакрытый PEM дал код возврата 0 при потерянных строках";; *) ok "C2 незакрытый PEM — ненулевой код возврата";; esac
+case "$out" in *CANARYBODY*) bad "C2 тело ключа утекло";; *) ok "C2 тело ключа не утекло";; esac
+# Закрытый блок отказом НЕ считается.
+out=$(set +o pipefail; printf -- '-----BEGIN PRIVATE KEY-----\nMIIE%s\n-----END PRIVATE KEY-----\nvolume: pgdata 42G\n' "$CANARY" | redact_stream 2>/dev/null; echo "rc=$?") # gitleaks:allow
+case "$out" in *"rc=0"*) ok "C2 закрытый блок — код возврата 0";; *) bad "C2 закрытый блок ошибочно объявлен отказом";; esac
+kept "C2 секция после закрытого блока сохранена" "$out" 'pgdata 42G'
+# Мягкий вариант: отказ маскировки не роняет вызывающего под `set -e` — ротация
+# секрета, оборванная между сменой пароля и перезапуском потребителя, оставила бы
+# систему в половинчатом состоянии. Понижается ТОЛЬКО код 3.
+have redact_stream_soft || true
+out=$(set +o pipefail; printf '%s\n' '-----BEGIN PRIVATE KEY-----' 'BODYLINE1234' | redact_stream_soft 2>/dev/null; echo "rc=$?") # gitleaks:allow
+case "$out" in *"rc=0"*) ok "C2 мягкий вариант понижает отказ маскировки";; *) bad "C2 мягкий вариант не понизил код 3";; esac
+# Отказ ВЫШЕ по конвейеру мягкий вариант не проглатывает: под pipefail код
+# упавшей команды обязан дойти до вызывающего.
+out=$(set -o pipefail; { echo x; exit 7; } | redact_stream_soft >/dev/null 2>&1; echo "rc=$?")
+case "$out" in *"rc=7"*) ok "C2 мягкий вариант не глушит отказ выше по конвейеру";; *) bad "C2 отказ конвейера проглочен: $out";; esac
+# Понижается РОВНО код 3, а не любой ненулевой. Заглушка моделирует тот самый
+# отказ — падение самого ядра: без неё мутант «понижаем любой код» набором не
+# ловился, то есть правило числилось покрытым напрасно.
+out=$(_redact_core(){ return 9; }; redact_stream_soft </dev/null >/dev/null 2>&1; echo "rc=$?")
+case "$out" in *"rc=9"*) ok "C2 мягкий вариант понижает только код 3";; *) bad "C2 мягкий вариант проглотил код 9: $out";; esac
+
+if command -v jq >/dev/null 2>&1; then
+  # C3. Различитель `~N` сам создавал столкновение: документ, уже содержащий
+  # ключи `<REDACTED>` и `<REDACTED>~1` (повторная маскировка снимка — обычное
+  # дело), терял запись целиком при коде возврата ноль.
+  out=$(printf '{"<REDACTED>":"KEEP_A","<REDACTED>~1":"KEEP_B","sb_secret_AAAAAAAAAAAA":"KEEP_C"}' | redact_json_deep)
+  n=$(printf '%s' "$out" | jq 'length' 2>/dev/null)
+  if [ "$n" = "3" ]; then ok "C3 три ключа остались тремя"; else bad "C3 ключей $n, ожидалось 3: $out"; fi
+  kept "C3 значение KEEP_A сохранено" "$out" 'KEEP_A'
+  kept "C3 значение KEEP_B сохранено" "$out" 'KEEP_B'
+  kept "C3 значение KEEP_C сохранено" "$out" 'KEEP_C'
+
+  # C4. Секретное имя ключа обязано распространяться на скалярные листья внутри:
+  # `{"DB_PASSWORD":{"value":"…"}}` — нейтральное внутреннее имя не отменяет
+  # секретности родителя.
+  out=$(printf '{"DB_PASSWORD":{"value":"%s","note":"%s"},"safe":"kept"}' "$CANARY" "$CANARY" | redact_json_deep)
+  leaked "C4 скалярный лист под секретным ключом замаскирован" "$out"
+  kept   "C4 структура контейнера сохранена" "$out" '"value"'
+  kept   "C4 соседнее поле сохранено"        "$out" '"kept"'
+
+  # C5. Проба имени ключа отбрасывала имена с пробелом и скобками, и они
+  # считались НЕсекретными — значение уходило открытым текстом.
+  out=$(printf '{"db password":"%s","password[]":"%s","x":"kept"}' "$CANARY" "$CANARY" | redact_json_deep)
+  leaked "C5 ключ с пробелом" "$out"
+  kept   "C5 соседнее поле сохранено" "$out" '"kept"'
+  out=$(printf '{"password[]":"%s","x":"kept"}' "$CANARY" | redact_json_deep)
+  leaked "C5 ключ со скобками" "$out"
+fi
+
 echo "== B3: построчный путь не ломает валидность JSON"
 if command -v jq >/dev/null 2>&1; then
   out=$(printf '%s\n' '{"Keys": null, "ApiVersion": "1.41"}' | redact_stream)
@@ -266,11 +336,16 @@ if command -v jq >/dev/null 2>&1; then
   kept "A7 EnvNames сохранены"        "$out" 'API_TOKEN'
   kept "A7 daemon_id сохранён"        "$out" 'abc123'
   kept "A7 SESSION_TIMEOUT сохранён"  "$out" '30'
-  # Контейнер под секретным именем не подменяется целиком: структура остаётся,
-  # внутренние ключи судятся сами по себе.
+  # Контейнер под секретным именем не подменяется целиком — СТРУКТУРА остаётся,
+  # но все скалярные листья внутри маскируются: нейтральное внутреннее имя не
+  # отменяет секретности родителя. Ожидание изменено по находке контрольного
+  # круга: прежняя редакция выпускала {"DB_PASSWORD":{"value":"…"}} открытым
+  # текстом. Осознанная цена — соседнее не-секретное поле внутри такого
+  # контейнера тоже уходит под маску.
   out=$(printf '{"secrets":{"Image":"nginx:1.27","token":"%s"}}' "$CANARY" | redact_json_deep)
   leaked "A7 секрет внутри контейнера замаскирован" "$out"
-  kept   "A7 структура контейнера сохранена"        "$out" 'nginx:1.27'
+  kept   "A7 имена полей контейнера сохранены"      "$out" '"Image"'
+  kept   "A7 структура контейнера сохранена"        "$out" '"secrets"'
 fi
 
 echo "== A6: обе ветки согласованы на одном входе"
@@ -307,6 +382,12 @@ if command -v jq >/dev/null 2>&1; then
   case "$out" in "rc="*) ok "B4 на битом входе ничего не напечатано";; *) bad "B4 на битом входе напечатано лишнее";; esac
   out=$(set +o pipefail; printf '' | redact_json_with_jq 2>/dev/null; echo "rc=$?")
   case "$out" in *"rc=0"*) bad "B4 пустой вход дал код возврата 0";; *) ok "B4 пустой вход — ненулевой код возврата";; esac
+  # ЧАСТИЧНОЕ чтение: вход оборвался, но что-то уже прочитано. Проверка «вывод
+  # непустой» такой отказ не видит — усечённый документ выглядит исправным.
+  # Заглушка моделирует именно этот отказ (данные плюс ненулевой код), иначе
+  # правило числится покрытым напрасно: мутант «страховку снять» набором не ловился.
+  out=$(cat(){ printf '{"a":1}'; return 1; }; redact_json_deep </dev/null 2>/dev/null; echo "rc=$?")
+  case "$out" in *"rc=0"*) bad "B4 частичное чтение входа выдано за успех";; *) ok "B4 частичное чтение входа — ненулевой код";; esac
   out=$(set +o pipefail; printf '{"Config":{"Env":["API_TOKEN=%s"]}}' "$CANARY" | redact_json_with_jq; echo "rc=$?")
   leaked "B4 на исправном входе маскирует" "$out"
   case "$out" in *"rc=0"*) ok "B4 на исправном входе код возврата 0";; *) bad "B4 на исправном входе ненулевой код";; esac

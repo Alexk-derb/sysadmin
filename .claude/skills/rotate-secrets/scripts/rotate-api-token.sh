@@ -101,11 +101,11 @@ printf '%s\n%s\n%s\n' "$NEW" "$VAR_NAME" "$ENV_FILE" | ssh "$SERVER" '
         { print }
     '\'' "$ENV_FILE" > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
     echo "  ok: $ENV_FILE"
-' 2>&1 | redact_stream
+' 2>&1 | redact_stream_soft
 
 # 2. Restart сервиса
 echo "[2/3] Restart $CONSUMER_DIR..."
-ssh "$SERVER" "cd '$CONSUMER_DIR' && docker compose restart" 2>&1 | redact_stream
+ssh "$SERVER" "cd '$CONSUMER_DIR' && docker compose restart" 2>&1 | redact_stream_soft
 sleep 3
 
 # 3. Verify. Токен передаётся verify-команде через ENV (не интерполируется в
