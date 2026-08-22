@@ -358,6 +358,46 @@ if command -v jq >/dev/null 2>&1; then
   if printf '%s' "$out" | jq -e . >/dev/null 2>&1; then ok "B3 JSON с массивом Env валиден"; else bad "B3 JSON с массивом Env сломан: $out"; fi
 fi
 
+echo "== F: находки круга 4 (2026-08-22)"
+# F1. Контейнер под секретным именем в ПОСТРОЧНОЙ ветке пропускался целиком:
+# комментарий обещал, что содержимое разберётся по собственным именам, но у
+# элементов массива имён нет. Глубокая ветка при этом маскировала — ветки снова
+# расходились, и решение о секретности жило не только в общем ядре.
+out=$(printf '%s\n' "{\"DB_PASSWORD\":[\"$CANARY\",\"${CANARY}2\"],\"safe\":\"KEEP\"}" | redact_stream)
+leaked "F1 массив под секретным именем замаскирован (построчный)" "$out"
+kept   "F1 соседнее поле сохранено (построчный)" "$out" 'KEEP'
+out=$(printf '%s\n' "{\"DB_PASSWORD\":{\"value\":\"$CANARY\"},\"safe\":\"KEEP\"}" | redact_stream)
+leaked "F1 объект под секретным именем замаскирован (построчный)" "$out"
+kept   "F1 соседнее поле сохранено при объекте" "$out" 'KEEP'
+if command -v jq >/dev/null 2>&1; then
+  o1=$(printf '%s\n' "{\"DB_PASSWORD\":[\"$CANARY\"],\"safe\":\"KEEP\"}" | redact_stream)
+  o2=$(printf '%s'   "{\"DB_PASSWORD\":[\"$CANARY\"],\"safe\":\"KEEP\"}" | redact_json_deep)
+  leaked "F1 обе ветки: построчный" "$o1"
+  leaked "F1 обе ветки: глубокий"   "$o2"
+  kept   "F1 обе ветки сохранили соседа: построчный" "$o1" 'KEEP'
+  kept   "F1 обе ветки сохранили соседа: глубокий"   "$o2" 'KEEP'
+  if printf '%s' "$o1" | jq -e . >/dev/null 2>&1; then ok "F1 построчный оставил JSON валидным"; else bad "F1 построчный сломал JSON: $o1"; fi
+fi
+
+# F2. Закрывающая кавычка принималась за начало нового контекста: после
+# `"MODE=check"` хвост состоял из пробелов, и следующее присваивание ошибочно
+# считалось началом строки-значения — остаток строки уничтожался. Класс B,
+# внесённый правкой круга 3.
+out=$(printf 'ExecStart=/usr/bin/env "MODE=check" API_TOKEN=%s APP_PORT=8080\n' "$CANARY" | redact_stream)
+leaked "F2 секрет после закавыченного аргумента замаскирован" "$out"
+kept   "F2 аргумент после секрета сохранён" "$out" 'APP_PORT=8080'
+kept   "F2 закавыченный аргумент сохранён"  "$out" '"MODE=check"'
+
+# F3. YAML в одинарных кавычках: удвоенная кавычка — это экранирование, а не
+# конец значения; и скобка внутри одинарных кавычек не закрывает flow-контейнер.
+out=$(printf "{password: '%s''%s', host: db.invalid}\n" "$CANARY" "$CANARY" | redact_stream)
+leaked "F3 удвоенная кавычка не обрывает значение" "$out"
+kept   "F3 соседнее поле после кавычек сохранено" "$out" 'db.invalid'
+out=$(printf "{note: '}', password: %s, host: db.invalid}\n" "$CANARY" | redact_stream)
+leaked "F3 секрет после скобки в кавычках замаскирован" "$out"
+kept   "F3 соседний host сохранён при скобке в кавычках" "$out" 'db.invalid'
+kept   "F3 закрывающая скобка на месте" "$out" 'invalid}'
+
 echo "== A5: секрет в ИМЕНИ ключа JSON"
 if command -v jq >/dev/null 2>&1; then
   # Приманка в ИМЕНИ отличается от приманки в значении. Одинаковые — и проверка
