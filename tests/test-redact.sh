@@ -184,6 +184,24 @@ out=$(printf '%s\n' "x-api-key: $CANARY" | redact_stream);          leaked "B2 �
 out=$(printf 'DATABASE_URL=postgres://u:%s@h/db\n' "$CANARY" | redact_stream)
 leaked "B2 пароль в DATABASE_URL ловится значением" "$out"
 
+echo "== B2-bis: имя БЕЗ разделителей (находка сверки 2026-08-22)"
+# Граница сегмента ловила `DB_PASSWORD`, но не `DBPASSWORD`: склеенные заглавные
+# не дают ни разделителя, ни перехода регистра, и весь идентификатор оказывался
+# ОДНИМ сегментом, не совпадающим ни с одним секрет-словом. Класс A — секрет
+# уходит наружу; такие имена обычны в бытовых compose-файлах и env-скриптах.
+for nm in AUTHTOKEN DBPASSWORD ACCESSTOKEN MYSECRET AWSSECRETKEY DBPASS DBPASSWD SSHKEY GPGKEY db1password db1pass; do
+  out=$(printf '%s=%s\n' "$nm" "$CANARY" | redact_stream);        leaked "B2-bis построчный: $nm" "$out"
+  out=$(printf '{"%s":"%s"}' "$nm" "$CANARY" | redact_json_deep); leaked "B2-bis глубокий:   $nm" "$out"
+done
+# Сужение не должно вернуться: имена-омонимы по-прежнему целы.
+out=$(printf '%s\n' 'KEYBOARD_DEVICE=/dev/input/event0' 'PASSENGER_COUNT=4' 'PATH=/usr/bin:/bin' \
+                    'DATAPATH_ROOT=/srv/data' 'TOKENIZER_PATH=/opt/m.model' | redact_stream)
+kept "B2-bis KEYBOARD_DEVICE не тронут" "$out" '/dev/input/event0'
+kept "B2-bis PASSENGER_COUNT не тронут" "$out" 'PASSENGER_COUNT=4'
+kept "B2-bis PATH не тронут"            "$out" '/usr/bin:/bin'
+kept "B2-bis DATAPATH_ROOT не тронут"   "$out" '/srv/data'
+kept "B2-bis TOKENIZER_PATH не тронут"  "$out" '/opt/m.model'
+
 echo "== B3: построчный путь не ломает валидность JSON"
 if command -v jq >/dev/null 2>&1; then
   out=$(printf '%s\n' '{"Keys": null, "ApiVersion": "1.41"}' | redact_stream)
@@ -218,7 +236,41 @@ if command -v jq >/dev/null 2>&1; then
   if [ "$n" = "3" ]; then ok "A5 три ключа остались тремя"; else bad "A5 ключей $n, ожидалось 3 — записи схлопнулись: $out"; fi
   kept "A5 значение схлопнутого ключа сохранено" "$out" '"one"'
   kept "A5 второе значение сохранено"            "$out" '"two"'
+  # Различитель обязан быть устойчив к порядку ключей: иначе diff двух снимков
+  # одного и того же объекта покажет артефактное различие, а оператор прочитает
+  # его как реальное изменение инфраструктуры. Ложный инвентарь — то, против чего
+  # затевалась v3 (находка сверки 2026-08-22).
+  o1=$(printf '{"sb_secret_AAAAAAAAAAAA":"a","sb_secret_BBBBBBBBBBBB":"b"}' | redact_json_deep | jq -S .)
+  o2=$(printf '{"sb_secret_BBBBBBBBBBBB":"b","sb_secret_AAAAAAAAAAAA":"a"}' | redact_json_deep | jq -S .)
+  if [ -n "$o1" ] && [ "$o1" = "$o2" ]; then ok "A5 различитель устойчив к порядку ключей"
+  else bad "A5 различитель зависит от порядка ключей: [$o1] vs [$o2]"; fi
   if printf '%s' "$out" | jq -e . >/dev/null 2>&1; then ok "A5 JSON остался валиден"; else bad "A5 JSON сломан"; fi
+fi
+
+echo "== A7: глубокая ветка маскирует значение по ИМЕНИ КЛЮЧА"
+if command -v jq >/dev/null 2>&1; then
+  # Дыра, существовавшая и в v2: строки документа вынимались и маскировались
+  # ПООДИНОЧКЕ, связь «имя ключа → значение» терялась, и самая очевидная форма
+  # секрета в JSON — {"DB_PASSWORD":"..."} — проходила насквозь. Построчный путь
+  # её ловил, глубокий нет; согласованность веток проверялась на строках, где
+  # присваивание лежит ВНУТРИ одной строки, и потому дыру не показывала.
+  for k in DB_PASSWORD API_TOKEN authToken DBPASSWORD sshkey 'x-api-key'; do
+    out=$(printf '{"%s":"%s","Image":"nginx:1.27"}' "$k" "$CANARY" | redact_json_deep)
+    leaked "A7 значение под ключом $k" "$out"
+    kept   "A7 соседнее поле при ключе $k" "$out" 'nginx:1.27'
+  done
+  # Не переусердствовали: безопасные имена ключей значения не теряют.
+  out=$(printf '{"Name":"/app","Image":"nginx:1.27","EnvNames":["API_TOKEN"],"daemon_id":"abc123","SESSION_TIMEOUT":30}' | redact_json_deep)
+  kept "A7 Name сохранено"            "$out" '"/app"'
+  kept "A7 Image сохранён"            "$out" 'nginx:1.27'
+  kept "A7 EnvNames сохранены"        "$out" 'API_TOKEN'
+  kept "A7 daemon_id сохранён"        "$out" 'abc123'
+  kept "A7 SESSION_TIMEOUT сохранён"  "$out" '30'
+  # Контейнер под секретным именем не подменяется целиком: структура остаётся,
+  # внутренние ключи судятся сами по себе.
+  out=$(printf '{"secrets":{"Image":"nginx:1.27","token":"%s"}}' "$CANARY" | redact_json_deep)
+  leaked "A7 секрет внутри контейнера замаскирован" "$out"
+  kept   "A7 структура контейнера сохранена"        "$out" 'nginx:1.27'
 fi
 
 echo "== A6: обе ветки согласованы на одном входе"

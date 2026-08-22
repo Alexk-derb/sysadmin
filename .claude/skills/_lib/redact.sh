@@ -29,12 +29,14 @@
 #
 #   * ОДНО ЯДРО ПРАВИЛ (`_redact_core`, единственный проход awk). Оно знает
 #     контекст: границу значения определяют кавычки и синтаксис, а не «первый
-#     пробел»; имя разбирается на СЕГМЕНТЫ (`_`, `-`, `.`, граница camelCase), и
-#     секрет-слово должно совпасть с сегментом целиком.
+#     пробел»; имя разбирается на СЕГМЕНТЫ (`_`, `-`, `.`, граница camelCase), а
+#     внутри сегмента сильные слова ищутся подстрокой, слабые — только целым
+#     сегментом или его окончанием (см. словарь ниже).
 #   * У JSON-ветки БОЛЬШЕ НЕТ СВОИХ РЕГУЛЯРОК. `redact_json_deep` использует jq
 #     только как структурный обход: вынимает все строки документа (значения и
-#     ИМЕНА КЛЮЧЕЙ), прогоняет их через то же ядро и возвращает обратно. Ветки
-#     не могут разойтись — расходиться нечему.
+#     ИМЕНА КЛЮЧЕЙ), прогоняет их через то же ядро и возвращает обратно; решение
+#     «маскировать ли значение по имени ключа» тоже принимает ядро — через
+#     пробную строку `имя=ПРОБА`. Ветки не могут разойтись — расходиться нечему.
 #
 # Границы, принятые осознанно (не забытые):
 #   * `-p` не покрывается: он неотличим от `docker run -p 8080:80`, и правило
@@ -49,9 +51,22 @@
 # ===========================================================================
 
 # --- ЕДИНЫЙ СЛОВАРЬ ИМЁН (обе ветки читают отсюда; второго списка НЕТ) -------
-# Секрет-слово должно совпасть с СЕГМЕНТОМ имени целиком: `KEY` ловит
-# `AWS_ACCESS_KEY_ID` и `authToken`, но не `KEYBOARD` и не `MONKEY`.
-REDACT_SECRET_WORDS='token,tokens,key,keys,secret,secrets,password,passwords,passwd,pass,passphrase,credential,credentials,apikey,auth,authorization,privkey,signature,salt,session,cookie,dsn,jwt,pat'
+#
+# Слова разделены по тому, насколько безопасно искать их ВНУТРИ сегмента.
+#
+# СИЛЬНЫЕ — длинные и однозначные: ищутся подстрокой в любом месте сегмента.
+# Это закрывает имена без разделителей (`DBPASSWORD`, `AUTHTOKEN`, `MYSECRET`,
+# `db1password`), где нет ни `_`, ни перехода регистра, и весь идентификатор —
+# ОДИН сегмент. Сверка 2026-08-22 показала замером, что чистая сегментная
+# граница пропускает такие имена НАСКВОЗЬ, причём одинаково в обеих ветках.
+REDACT_STRONG_WORDS='token,tokens,password,passwords,passwd,passphrase,secret,secrets,credential,credentials,apikey,privkey,signature,authorization,session,cookie,jwt'
+
+# СЛАБЫЕ — короткие, встречающиеся внутри обычных слов (`KEYBOARD`, `PASSENGER`,
+# `PATH`, `AUTHOR`). Совпадают только с сегментом ЦЕЛИКОМ либо с его ОКОНЧАНИЕМ:
+# так ловятся `SSHKEY`, `GPGKEY`, `DBPASS`, но не `KEYBOARD_DEVICE` и не
+# `PASSENGER_COUNT`. Осознанная цена: `MONKEY_ID` и `BYPASS_CACHE` попадут под
+# маску — утечка дороже ложного срабатывания (правило задания).
+REDACT_WEAK_WORDS='key,keys,pass,auth,salt,pat,dsn'
 
 # Хвостовой сегмент из этого списка снимает подозрение с имени: такие поля
 # держат адреса, пути и версии — то, ради чего снимок и снимается. Проверяется
@@ -68,7 +83,8 @@ REDACT_SAFE_WORDS='url,uri,urls,host,hostname,hosts,port,ports,path,paths,file,f
 # самостоятельное значение, и сдвиг на одну строку испортил бы весь документ.
 _redact_core() {
     awk -v SINGLE="${1:-0}" \
-        -v SECRET_WORDS="$REDACT_SECRET_WORDS" \
+        -v STRONG_WORDS="$REDACT_STRONG_WORDS" \
+        -v WEAK_WORDS="$REDACT_WEAK_WORDS" \
         -v SAFE_WORDS="$REDACT_SAFE_WORDS" '
 function rep(s, n,   i, o) { o = ""; for (i = 0; i < n; i++) o = o s; return o }
 
@@ -117,15 +133,27 @@ function split_camel(s,   i, c, p, o) {
     return o
 }
 
-# Имя — секрет? Сегменты, а не подстрока: иначе KEYBOARD_LAYOUT и MONKEY_MODE
-# уезжают в снимок как <REDACTED>, и инвентарь становится ложным (дефект B2).
-function is_secret(nm,   t, parts, n, i) {
+# Имя — секрет? Не подстрока «где угодно» (иначе KEYBOARD_LAYOUT и MONKEY_MODE
+# уезжают в снимок как <REDACTED> — дефект B2), но и не чистый сегмент (иначе
+# DBPASSWORD и SSHKEY уходят наружу — находка сверки). Три ступени:
+#   1) безопасный хвост имени снимает подозрение целиком;
+#   2) СИЛЬНОЕ слово — подстрока в любом месте сегмента;
+#   3) СЛАБОЕ слово — только сегмент целиком или его окончание.
+function is_secret(nm,   t, parts, n, i, j, w) {
     if (nm == "") return 0
     t = tolower(split_camel(nm))
     n = split(t, parts, /[^a-z0-9]+/)
     if (n == 0) return 0
     if (parts[n] in SAFE) return 0
-    for (i = 1; i <= n; i++) if (parts[i] in SECRET) return 1
+    for (i = 1; i <= n; i++) {
+        if (parts[i] == "") continue
+        for (j = 1; j <= NSTRONG; j++) if (index(parts[i], STRONG[j]) > 0) return 1
+        for (j = 1; j <= NWEAK; j++) {
+            w = WEAK[j]
+            if (parts[i] == w) return 1
+            if (length(parts[i]) > length(w) && substr(parts[i], length(parts[i]) - length(w) + 1) == w) return 1
+        }
+    }
     return 0
 }
 
@@ -255,8 +283,9 @@ function scrub(s) {
 }
 
 BEGIN {
-    n = split(SECRET_WORDS, a, ","); for (i = 1; i <= n; i++) SECRET[a[i]] = 1
-    n = split(SAFE_WORDS,   a, ","); for (i = 1; i <= n; i++) SAFE[a[i]] = 1
+    NSTRONG = split(STRONG_WORDS, STRONG, ",")
+    NWEAK   = split(WEAK_WORDS,   WEAK,   ",")
+    n = split(SAFE_WORDS, a, ","); for (i = 1; i <= n; i++) SAFE[a[i]] = 1
     R = "<REDACTED>"
     Q = sprintf("%c", 39)          # одинарная кавычка: внутри awk-программы её нет
     TC  = "[A-Za-z0-9_-]"          # символ непрозрачного токена
@@ -397,32 +426,71 @@ redact_json_deep() {
     if ! _redact_core 1 < "$tmpd/orig" > "$tmpd/red" 2>/dev/null; then
         rm -rf "$tmpd"; return 4
     fi
+
+    # Имена ключей, при которых ЗНАЧЕНИЕ обязано быть замаскировано. Строки
+    # документа вынимаются поодиночке, и связь «имя ключа → значение» при этом
+    # теряется: {"DB_PASSWORD":"…"} — самая очевидная форма секрета в JSON —
+    # проходила насквозь и в v2, и в первой редакции v3.
+    #
+    # Решение принимает ТО ЖЕ ядро, второго списка правил не заводим: имя
+    # подставляется в пробную строку `имя=ПРОБА`, и если проба исчезла — имя
+    # секретное. Ключи с переводом строки и прочей экзотикой пропускаются: они
+    # сломали бы соответствие 1:1, а на имя переменной не похожи.
+    if ! printf '%s' "$doc" | jq -r '
+            [paths[] | select(type == "string")] | unique | .[]
+            | select(test("^[A-Za-z0-9_.@:/-]+$"))
+        ' > "$tmpd/keys" 2>/dev/null; then
+        rm -rf "$tmpd"; return 4
+    fi
+    : > "$tmpd/secretkeys"
+    if [ -s "$tmpd/keys" ]; then
+        sed 's/$/=REDACTPROBEZZ/' "$tmpd/keys" | _redact_core 1 > "$tmpd/probe" 2>/dev/null
+        if [ "$(wc -l < "$tmpd/keys" | tr -d ' ')" != "$(wc -l < "$tmpd/probe" | tr -d ' ')" ]; then
+            rm -rf "$tmpd"; return 4
+        fi
+        paste -d'\t' "$tmpd/keys" "$tmpd/probe" \
+          | awk -F'\t' 'index($2, "REDACTPROBEZZ") == 0 { print $1 }' \
+          | jq -R . > "$tmpd/secretkeys" 2>/dev/null
+    fi
     # Соответствие строк 1:1 — обязательное условие: сдвиг сделал бы карту
     # замен ложной, а документ — тихо неверным.
     no=$(wc -l < "$tmpd/orig" | tr -d ' '); nr=$(wc -l < "$tmpd/red" | tr -d ' ')
     if [ "$no" != "$nr" ]; then rm -rf "$tmpd"; return 4; fi
 
-    printf '%s' "$doc" | jq --slurpfile O "$tmpd/orig" --slurpfile R "$tmpd/red" '
+    printf '%s' "$doc" | jq --slurpfile O "$tmpd/orig" --slurpfile R "$tmpd/red" \
+                            --slurpfile S "$tmpd/secretkeys" '
         # Маскировка ИМЁН схлопывает разные ключи в один: два `sb_secret_*` дают
         # два `<REDACTED>`, и объект молча теряет запись вместе со значением —
         # то же уничтожение данных, против которого затевалась v3. Поэтому
         # повторяющееся замаскированное имя получает различитель `~N`.
-        def rekey($m):
+        # Номер различителя берётся из ПОРЯДКА СОРТИРОВКИ исходных имён, а не из
+        # порядка их появления: иначе те же два ключа, переставленные местами,
+        # дают разный вывод, и diff двух снимков показывает различие, которого
+        # не было. Ложный инвентарь — ровно то, против чего затевалась v3.
+        def rekey($m; $sk):
           . as $obj
-          | reduce (keys_unsorted[]) as $k ({out: {}, seen: {}};
+          | (reduce (keys_unsorted[]) as $k ({}; .[($m[$k] // $k)] += [$k])) as $grp
+          | reduce (keys_unsorted[]) as $k ({};
               (($m[$k] // $k)) as $nk
-              | ((.seen[$nk] // 0) + 1) as $c
-              | .seen[$nk] = $c
-              | .out[(if $c > 1 then "\($nk)~\($c)" else $nk end)] = $obj[$k]
-            )
-          | .out;
-        def rmap($m):
-          if   type == "object" then rekey($m) | map_values(rmap($m))
-          elif type == "array"  then map(rmap($m))
+              | (if ($grp[$nk] | length) > 1
+                 then "\($nk)~\(($grp[$nk] | sort | index($k)) + 1)"
+                 else $nk end) as $out_k
+              | ($obj[$k]) as $v
+              # Секретное имя ключа маскирует СКАЛЯРНОЕ значение. Контейнер
+              # (объект, массив) не подменяется: структура снимка сохраняется,
+              # а вложенные ключи судятся сами по себе — так же, как построчный
+              # путь не трогает значение, начинающееся с `{` или `[`.
+              | .[$out_k] = (if ($sk[$k] // false) and ($v | type) != "object" and ($v | type) != "array"
+                             then "<REDACTED>" else $v end)
+            );
+        def rmap($m; $sk):
+          if   type == "object" then rekey($m; $sk) | map_values(rmap($m; $sk))
+          elif type == "array"  then map(rmap($m; $sk))
           elif type == "string" then ($m[.] // .)
           else . end;
         (reduce range(0; ($O | length)) as $i ({}; .[$O[$i]] = $R[$i])) as $map
-        | rmap($map)
+        | (reduce ($S[]) as $k ({}; .[$k] = true)) as $skeys
+        | rmap($map; $skeys)
     ' 2>/dev/null
     rc=$?
     rm -rf "$tmpd"
