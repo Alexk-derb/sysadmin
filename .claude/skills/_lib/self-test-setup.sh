@@ -136,14 +136,18 @@ self_test_setup() {
 
     # 6. bridge-файл. Наличия мало: пустой файл, файл без frontmatter или указатель на
     # несуществующий каталог выглядят «на месте», а @sysadmin из чужой папки не работает
-    # (находка сверки 2026-08-20 — проверка была ложно-зелёной).
+    # (находка сверки 2026-08-20 — проверка была ложно-зелёной). Состав проверки берётся у
+    # ГЕНЕРАТОРА (`_wb_check_bridge`), а не переписывается здесь: своя копия правил уже
+    # расходилась с оригиналом и пропускала приманку `name:` в теле файла (круг 8).
     local _stp_bridge="$HOME/.claude/agents/sysadmin.md"
+    if ! declare -F _wb_check_bridge >/dev/null 2>&1; then
+        # shellcheck source=/dev/null
+        . "$(dirname "${BASH_SOURCE[0]}")/write-bridge.sh" 2>/dev/null || true
+    fi
     if [ ! -f "$_stp_bridge" ]; then
         _stp_add "Нет bridge-файла ~/.claude/agents/sysadmin.md — @sysadmin не вызвать из других папок."
     elif [ ! -s "$_stp_bridge" ]; then
         _stp_add "Bridge-файл ~/.claude/agents/sysadmin.md пуст — @sysadmin не заработает."
-    elif ! grep -qE '^name: sysadmin$' "$_stp_bridge" || ! grep -qE '^description: .+' "$_stp_bridge"; then
-        _stp_add "В bridge-файле нет обязательного frontmatter (name/description) — агент не будет найден."
     else
         local _stp_root
         _stp_root="$(grep -oE '\*\*`[^`]+`\*\*' "$_stp_bridge" | head -1 | tr -d '*`')"
@@ -152,6 +156,10 @@ self_test_setup() {
             _stp_add "В bridge-файле не найден путь к мозгу — указатель испорчен."
         elif [ ! -f "$_stp_root/CLAUDE.md" ]; then
             _stp_add "Bridge ведёт на $_stp_root, но там нет CLAUDE.md — указатель в пустоту."
+        elif declare -F _wb_check_bridge >/dev/null 2>&1 && ! _wb_check_bridge "$_stp_bridge" "$_stp_root"; then
+            _stp_add "Bridge-файл не проходит проверку указателя (frontmatter или каноническая строка пути) — @sysadmin не зарегистрируется."
+        elif ! declare -F _wb_check_bridge >/dev/null 2>&1; then
+            _stp_add "Не удалось прочитать write-bridge.sh — проверить содержимое bridge-файла нечем."
         elif [ -n "${2:-}" ] && [ "$(cd "$_stp_root" 2>/dev/null && pwd -P)" != "$(cd "$2" 2>/dev/null && pwd -P)" ]; then
             # Указатель может быть исправным, но от ПРЕЖНЕЙ установки: тогда @sysadmin уводит
             # в другой мозг, а самопроверка этой (текущей) установки рапортует «всё на месте»

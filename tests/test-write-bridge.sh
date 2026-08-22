@@ -108,7 +108,7 @@ printf '%s' "$out" | grep -qF "не удалось записать времен
 # И ровно одна причина: если отказ записи не прерывает работу, следом отработает постусловие
 # и добавит вторую жалобу о том же событии. Две причины на один отказ — признак, что защита
 # не остановила выполнение.
-if printf '%s' "$out" | grep -qF "временный файл неполон"; then bad "к отказу приписана вторая, ложная причина"; else ok "причина отказа ровно одна"; fi
+if printf '%s' "$out" | grep -qF "временный файл не проходит проверку указателя"; then bad "к отказу приписана вторая, ложная причина"; else ok "причина отказа ровно одна"; fi
 [ ! -e "$(bridge_file)" ]; check $? "битый файл не оставлен"
 if ls "$HOME/.claude/agents/".sysadmin-bridge.* >/dev/null 2>&1; then bad "временный файл остался"; else ok "временный файл убран"; fi
 
@@ -445,6 +445,95 @@ use_home nocloud
 write_bridge "$BRAIN" >/dev/null 2>&1
 if grep -qF "облачной синхронизации" "$(bridge_file)"; then bad "предупреждение появилось без повода"; else ok "для обычной папки предупреждения нет"; fi
 
+
+echo "== 8. Приманка во frontmatter: настоящее имя чужое, правильное — в теле"
+# Диверсант круга 8. `name: impostor` во frontmatter плюс строка `name: sysadmin` ниже:
+# все проверки, ищущие `^name: sysadmin$` по ВСЕМУ файлу, зелены, а subagent
+# регистрируется под чужим именем — @sysadmin не отзывается.
+use_home decoy
+write_bridge "$BRAIN" >/dev/null 2>&1
+DECOY="$(bridge_file)"
+awk 'NR<=5 { sub(/^name: sysadmin$/, "name: impostor"); print; next }
+     NR==6 { print "name: sysadmin"; print; next }
+     { print }' "$DECOY" > "$DECOY.tmp" && command mv "$DECOY.tmp" "$DECOY"
+awk 'NR==1{next} /^---$/{exit} /^name:/{print}' "$DECOY" | grep -qx 'name: impostor'
+check $? "стенд: во frontmatter стоит чужое имя"
+grep -qx 'name: sysadmin' "$DECOY"; check $? "стенд: приманка в теле на месте"
+mv() { return 0; }
+out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
+unset -f mv
+[ "$rc" -ne 0 ]; check $? "приманка во frontmatter: код возврата не ноль"
+if printf '%s' "$out" | grep -qF "$SUCCESS_MARK"; then bad "принят указатель с чужим именем агента"; else ok "указатель с чужим именем не принят"; fi
+
+echo "== 8б. Повторённый ключ во frontmatter"
+# YAML берёт ПОСЛЕДНЕЕ значение ключа: `name: sysadmin` сверху не спасает от
+# `name: impostor` ниже в том же блоке.
+use_home dupkey
+write_bridge "$BRAIN" >/dev/null 2>&1
+DUP="$(bridge_file)"
+awk 'NR==2 { print; print "name: impostor"; next } { print }' "$DUP" > "$DUP.tmp" && command mv "$DUP.tmp" "$DUP"
+awk 'NR==1{next} /^---$/{exit} /^name:/{c++} END{exit !(c==2)}' "$DUP"
+check $? "стенд: ключ name во frontmatter повторён"
+mv() { return 0; }
+out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
+unset -f mv
+[ "$rc" -ne 0 ]; check $? "повторённый ключ: код возврата не ноль"
+if printf '%s' "$out" | grep -qF "$SUCCESS_MARK"; then bad "принят указатель с повторённым ключом"; else ok "указатель с повторённым ключом не принят"; fi
+
+echo "== 9. Первая установка провалилась — активного битого указателя не остаётся"
+# Круг 8: при провале финального постусловия копии прежнего файла нет (ставим впервые),
+# и битый `sysadmin.md` оставался активным вопреки rc=1. Отсутствующий агент безопаснее
+# невалидного: невалидный Claude молча пропустит, а оператор будет считать установленным.
+use_home firstfail
+# `mv`, который переносит файл, но портит цель: имитация записи, не прошедшей проверку.
+mv() { command mv "$@" 2>/dev/null; local d; for d; do :; done; printf 'сломано\n' > "$d"; return 0; }
+out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
+unset -f mv
+[ "$rc" -ne 0 ]; check $? "первая установка с битой целью: код возврата не ноль"
+[ ! -e "$(bridge_file)" ]; check $? "активного sysadmin.md не осталось"
+if ls "$(bridge_file)".failed.* >/dev/null 2>&1; then ok "битый файл сохранён под именем .failed.*"; else bad "битый файл исчез без следа"; fi
+printf '%s' "$out" | grep -qF "битый указатель убран"; check $? "об уборке сказано вслух"
+
+echo "== 10. Читатель отвергает деградировавший корень (нет ни маркера, ни скиллов)"
+# Круг 8: читатель требовал только CLAUDE.md, писатель — CLAUDE.md плюс второй признак.
+# Из-за расхождения любой чужой проект с CLAUDE.md по устаревшему пути грузился как мозг.
+use_home degraded
+DEGRADED="$TMPROOT/degraded-root"; mkdir -p "$DEGRADED/.claude/skills"; : > "$DEGRADED/CLAUDE.md"; : > "$DEGRADED/.sysadmin-root"
+write_bridge "$DEGRADED" >/dev/null 2>&1
+rm -f "$DEGRADED/.sysadmin-root"; rmdir "$DEGRADED/.claude/skills" "$DEGRADED/.claude" 2>/dev/null
+[ -f "$DEGRADED/CLAUDE.md" ] && [ ! -d "$DEGRADED/.claude/skills" ]
+check $? "стенд: остался только CLAUDE.md"
+(
+    # shellcheck source=/dev/null
+    source "$FIND_CONFIG_LIB"
+    locate_sysadmin_root >/dev/null 2>&1
+    [ "$(cd "${SYSADMIN_ROOT:-/nowhere}" 2>/dev/null && pwd -P)" != "$(cd "$DEGRADED" && pwd -P)" ]
+); check $? "читатель не принял каталог без второго признака корня"
+
+echo "== 11. Корень файловой системы корнем мозга не считается"
+# `${путь%/}` превращает `/` в пустую строку, а `C:/` — в `C:`. Без отдельной проверки отказ
+# всё равно случится, но ПО ЛОЖНОЙ ПРИЧИНЕ («нет CLAUDE.md»), а при существующем
+# `/CLAUDE.md` указатель запишется с неразбираемым путём. Проверяю именно причину отказа:
+# сторож, чьё снятие ничего не меняет в наблюдаемом поведении, доказан не был бы (круг 8).
+use_home fsroot
+out="$(write_bridge "/" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ]; check $? "корень файловой системы отвергнут"
+printf '%s' "$out" | grep -qF "корень файловой системы не может быть корнем мозга"
+check $? "корень файловой системы: причина названа верно"
+[ ! -e "$(bridge_file)" ]; check $? "корень файловой системы: файл не создан"
+
+echo "== 12. Висячая символическая ссылка на месте указателя"
+# `-f` висячую ссылку не видит: копировать нечего, и прежде она заменялась молча. Оператор
+# при этом уверен, что указатель ведёт в другое место (сверка круга 8).
+use_home dangling
+mkdir -p "$HOME/.claude/agents"
+if ln -s "$TMPROOT/nowhere-at-all" "$(bridge_file)" 2>/dev/null; then
+    out="$(write_bridge "$BRAIN" 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ]; check $? "висячая ссылка: запись всё же прошла"
+    printf '%s' "$out" | grep -qF "висячей символической ссылкой"; check $? "о висячей ссылке предупреждено"
+else
+    skip "висячая ссылка на месте указателя" "символические ссылки в этой среде не создаются"
+fi
 echo
 echo "────────────────────────────────────────────────────"
 if [ "$PASS" -eq 0 ]; then
